@@ -26,7 +26,24 @@ Version 1 (`schema: 1`). This file is the contract between `src/store.js`,
 | `server.pid`    | PID of the detached server, written by `taskmap serve`.     |
 | `server.log`    | stdout+stderr of the detached server.                       |
 | `config.json`   | Optional. `{ "prompt_reminder": false }` (phase 2 switch).  |
+| `sessions/<pid>.json` | One per running `taskmap watch`; see below.           |
 | `demo/`         | The demo project created by `taskmap demo`.                 |
+
+### Session heartbeats: `~/.taskmap/sessions/<pid>.json`
+
+```json
+{ "project_id": "portfolio-website-3f9a1c", "cwd": "/home/me/site", "pid": 4211,
+  "started": "2026-08-22T14:03:11.412Z", "last_seen": "2026-08-22T14:41:52.006Z",
+  "opened": true }
+```
+
+One file per Claude Code session, written by the `taskmap watch` monitor: on start,
+then every 20 s (`SESSION_BEAT_MS`), and removed on exit. A session counts as **live**
+while `last_seen` is under 60 s old (`SESSION_TTL_MS`); anything older is a session
+that died without cleaning up and is unlinked by the next reader. `project_id` is
+`null` until the session's directory has a map. `opened` is set by
+`taskmap open --if-needed` and is what stops a session opening a second tab; the
+heartbeat preserves it across refreshes.
 
 Project id = `slug(name) + "-" + sha1(absolute path).slice(0, 6)`, e.g.
 `portfolio-website-3f9a1c`. The id is stable for a given name and path and
@@ -278,12 +295,17 @@ unread: 2
 `init` prints `n0  <name>  <url>` (or `status` output when the map already exists).
 `start` `done` `block` `skip` `reopen` `edit` `note` print the node id.
 `serve --ensure` prints `server running at <url>` or `server started at <url>`.
+`open --if-needed` prints the URL alone when it opened a browser, or
+`<url>  (already open in a browser)` / `<url>  (already opened this session)` when it
+did not. It opens nothing when a live session heartbeat for the project has `opened`,
+or when `/api/clients` reports a connected client for it; with no answer from the
+server it opens. `TASKMAP_NO_BROWSER=1` suppresses the launch everywhere.
 `demo` prints the demo URL. `open` prints the URL it opened. `forget <id>` removes a registry entry and prints the id.
 `export --obsidian <dir>` writes `<id> <title>.md` per node (YAML frontmatter, `[[wikilinks]]` to parent, children, dependencies and dependents) and prints `<n> notes -> <dir>`.
 `config prompt-reminder on|off` toggles `prompt_reminder` in `~/.taskmap/config.json`; bare `config` prints the file.
 
 Hooks read the event JSON on stdin and print what Claude should see:
-- `hook session-start`: `[taskmap] Map found: <name>, <done>/<total> done, <n> in progress, <b> blocked, <k> unread. Run /taskmap to resume.` or nothing. When `source` is `compact`: a `[taskmap] Context was compacted…` line, the `tree --open` output (depth reduced until it fits in 9,000 characters), the in-progress nodes, the blocked nodes and the unread count.
+- `hook session-start`: `[taskmap] Map found: <name>, <done>/<total> done, <n> in progress, <b> blocked, <k> unread. Run /taskmap to resume.` or nothing. A second line names the overview URL when more than one project is registered and present on disk. When `source` is `compact`: a `[taskmap] Context was compacted…` line, the `tree --open` output (depth reduced until it fits in 9,000 characters), the in-progress nodes, the blocked nodes and the unread count.
 - `hook stop`: nothing when `stop_hook_active` is true or no leaf is in progress; otherwise `{"decision":"block","reason":"taskmap: n5 \"…\" is still in_progress …"}`.
 - `hook prompt`: nothing unless `prompt_reminder` is on, the prompt is over 400 characters, does not start with `/`, and no leaf is in progress; then one `[taskmap] Long prompt …` line.
 
@@ -318,9 +340,12 @@ project or node, or project directory missing), 500 (unexpected).
 
 | Method | Path | Body | Response |
 | ------ | ---- | ---- | -------- |
-| GET | `/` `/app.js` `/style.css` `/vendor/d3.v7.min.js` | | static files from `ui/` |
+| GET | `/` | | the overview page (`ui/index.html`). `/?p=<id>` answers `302` to `/p/<id>` |
+| GET | `/p/<id>` | | the project page (`ui/project.html`); the id is read client-side |
+| GET | `/app.js` `/overview.js` `/style.css` `/vendor/d3.v7.min.js` | | static files from `ui/` |
 | GET | `/api/health` | | `{ "ok": true, "app": "taskmap", "version": "0.1.0", "pid": 123, "port": 4242 }` |
-| GET | `/api/projects` | | `{ "projects": [ { "id", "name", "path", "updated", "exists", "progress": { "done", "total" } \| null, "in_progress": n, "unread": k } ] }` newest first |
+| GET | `/api/projects` | | `{ "projects": [ { "id", "name", "path", "goal", "updated", "exists", "live", "sessions", "clients", "progress": { "done", "total" } \| null, "in_progress": n, "in_progress_titles": [..], "blocked": b, "unread": k } ] }` newest first |
+| GET | `/api/clients` | | `{ "ok": true, "total": n, "projects": { "<id>": n }, "sessions": { "<id>": n }, "session_ttl_ms": 60000 }` |
 | GET | `/api/projects/:id` | | `{ "project": { "id", "name", "path", "updated", "exists", "url" }, "map": <map.json>, "log": [ last 100 log lines, oldest first ] }` |
 | GET | `/api/projects/:id/events` | | SSE, see below |
 | POST | `/api/projects/:id/feedback` | `{ "node": "n12", "text": "…" }` | `{ "ok": true, "node": <node> }` |
@@ -334,8 +359,12 @@ chars); `reason` is required for `blocked` and `skipped`; `parent` and
 POSTs are logged with `actor: "ui"`; the first three also append to
 `inbox.jsonl` and create an unread feedback entry on the node.
 
-`/?p=<project id>` selects a project; with no `p` the UI loads the most
-recently updated project that still exists on disk.
+`live` is true when at least one session heartbeat for the project is fresh;
+`clients` is the number of SSE connections the server currently holds for it.
+
+`/p/<project id>` is the project page. `/?p=<id>` redirects to it, so links printed
+before 0.2 keep working. On `/p/<unknown id>` the UI falls back to the most recently
+updated project that still exists on disk and says so.
 
 ### SSE: `/api/projects/:id/events`
 
@@ -356,7 +385,12 @@ data: {"type":"ping"}
 
 ## 7. UI expectations (`ui/`)
 
-- On load: `GET /api/projects` for the switcher, `GET /api/projects/:id`
+- The overview (`/`) polls `GET /api/projects` every 2 s and draws one card per
+  project: name, goal, progress bar, in-progress titles, blocked and unread chips,
+  a live dot when `live`, and the age of `updated`. Live projects sort first, then
+  by `updated` descending. A card links to `/p/<id>`. No SSE: the payload is small
+  and the page must survive the server restarting.
+- On a project page, on load: `GET /api/projects` for the switcher, `GET /api/projects/:id`
   for the initial render, then `EventSource` on `/events`. Re-render on every
   `map` message. Reconnect with backoff (1 s, 2 s, 4 s, max 15 s) and show a
   "disconnected" state meanwhile; also re-fetch the map on reconnect.

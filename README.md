@@ -66,6 +66,17 @@ skipped nodes with a reason, and assumptions are written on the node rather than
 turned into a question. Claude blocks and asks only when the decision costs money,
 destroys data, is public, or would change the rest of the plan.
 
+## One tab, every project
+
+`http://localhost:4242/` is an overview: one card per project with its goal,
+progress, what is in progress right now, blocked and unread counts, and a green dot
+for every project a Claude Code session is actually running in. Live projects sort
+first. Click a card to open that project's map at `/p/<id>`.
+
+This is the tab to leave open on a second monitor. Claude opens it for you once per
+session and never again — if you close it, it stays closed until you open it or the
+project changes.
+
 ## Talking back
 
 The dashboard is not read-only. On any node you can:
@@ -99,7 +110,7 @@ taskmap note <id> "<text>"
 taskmap tree [--open|--all] [--depth N]     # --open collapses finished subtrees
 taskmap show <id> | next | inbox [--peek] | status | check [--json]
 taskmap serve [--ensure|--stop|--restart|--foreground] [--port N]
-taskmap open | watch | demo | forget <project id>
+taskmap open [--if-needed] | watch | demo | forget <project id>
 taskmap export --obsidian <dir>             # one note per node, [[wikilinks]] between them
 taskmap config prompt-reminder on|off
 ```
@@ -122,6 +133,7 @@ anywhere. `taskmap help` prints the rest.
 | `~/.taskmap/registry.json` | Every project the dashboard knows about. |
 | `~/.taskmap/server.pid`, `server.log` | The one shared server. |
 | `~/.taskmap/config.json` | Small preferences. |
+| `~/.taskmap/sessions/` | One heartbeat file per running session; what the live dot reads. |
 | `~/.taskmap/demo/` | The demo project. |
 
 `taskmap init` adds `.taskmap/` to the project's `.gitignore` unless you pass `--track`.
@@ -149,7 +161,7 @@ want. They are gitignored, so `git status` will not remind you.
 bash tests/smoke.sh          # temp project, isolated home, its own port
 claude plugin validate .     # manifest and hook schema
 node tests/gen40.js <dir>    # a 40-node map for layout checks
-node tests/shots.js <projectId> 1440x900 out.png [select=n10] [view=outline]
+node tests/shots.js <projectId|/path> 1440x900 out.png [select=n10] [view=outline] [mobile=1]
 scripts/install-skills.sh <checkout>   # third-party design skills, not tracked here
 ```
 

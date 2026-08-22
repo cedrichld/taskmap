@@ -12,6 +12,8 @@ const SCHEMA = 1;
 const STATUSES = ['pending', 'in_progress', 'done', 'blocked', 'skipped'];
 const MAX_DEPTH = 3;
 const TITLE_WORDS_WARN = 8;
+const SESSION_TTL_MS = 60000; // a heartbeat older than this belongs to a dead session
+const SESSION_BEAT_MS = 20000; // how often `taskmap watch` refreshes it
 const VERSION = require('../.claude-plugin/plugin.json').version || '0.0.0';
 
 class UserError extends Error {
@@ -45,7 +47,11 @@ function baseUrl() {
 }
 
 function projectUrl(id) {
-  return `${baseUrl()}/?p=${encodeURIComponent(id)}`;
+  return `${baseUrl()}/p/${encodeURIComponent(id)}`;
+}
+
+function overviewUrl() {
+  return `${baseUrl()}/`;
 }
 
 function slug(s) {
@@ -193,6 +199,124 @@ function listProjects() {
 
 function projectById(id) {
   return readRegistry().projects[id] || null;
+}
+
+// ---------- session heartbeats ----------
+// One file per running `taskmap watch` (one per Claude Code session):
+// ~/.taskmap/sessions/<pid>.json  { project_id, cwd, pid, started, last_seen, opened }
+// The monitor rewrites it every SESSION_BEAT_MS and deletes it on exit; anything
+// older than SESSION_TTL_MS is a session that died without cleaning up.
+
+function sessionsDir() {
+  return path.join(home(), 'sessions');
+}
+
+function sessionFile(pid) {
+  return path.join(sessionsDir(), `${pid}.json`);
+}
+
+function isLiveSession(s, ttlMs = SESSION_TTL_MS) {
+  if (!s || !s.last_seen) return false;
+  const age = Date.now() - Date.parse(s.last_seen);
+  return Number.isFinite(age) && age >= -SESSION_TTL_MS && age < ttlMs;
+}
+
+// Every live session, stale files pruned. Never throws.
+function liveSessions({ ttlMs = SESSION_TTL_MS, prune = true } = {}) {
+  const dir = sessionsDir();
+  let names = [];
+  try {
+    names = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
+  } catch (e) {
+    return [];
+  }
+  const live = [];
+  for (const name of names) {
+    const file = path.join(dir, name);
+    let s = null;
+    try {
+      s = readJson(file, null);
+    } catch (e) {
+      s = null; // unreadable or half-written: treat as dead and prune
+    }
+    if (isLiveSession(s, ttlMs)) {
+      live.push(s);
+      continue;
+    }
+    if (prune) {
+      try {
+        fs.unlinkSync(file);
+      } catch (e) {
+        // another process got there first
+      }
+    }
+  }
+  return live.sort((a, b) => String(a.started || '').localeCompare(String(b.started || '')));
+}
+
+// project id -> number of live sessions
+function liveSessionCounts(opts) {
+  const counts = {};
+  for (const s of liveSessions(opts)) {
+    if (!s.project_id) continue;
+    counts[s.project_id] = (counts[s.project_id] || 0) + 1;
+  }
+  return counts;
+}
+
+// Write (or refresh) this process's heartbeat, keeping fields we do not own.
+function writeSession({ pid = process.pid, project_id = null, cwd = null, started = null, opened = undefined } = {}) {
+  const file = sessionFile(pid);
+  let prev = {};
+  try {
+    prev = readJson(file, null) || {};
+  } catch (e) {
+    prev = {};
+  }
+  const rec = {
+    project_id: project_id === null ? prev.project_id || null : project_id,
+    cwd: cwd === null ? prev.cwd || null : cwd,
+    pid,
+    started: started || prev.started || now(),
+    last_seen: now(),
+    opened: opened === undefined ? Boolean(prev.opened) : Boolean(opened),
+  };
+  try {
+    fs.mkdirSync(sessionsDir(), { recursive: true });
+    writeJsonAtomic(file, rec);
+  } catch (e) {
+    return null; // a heartbeat is never worth failing a command over
+  }
+  return rec;
+}
+
+function removeSession(pid = process.pid) {
+  try {
+    fs.unlinkSync(sessionFile(pid));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Has some live session already opened a browser for this project?
+function sessionOpened(projectId) {
+  return liveSessions().some((s) => s.project_id === projectId && s.opened);
+}
+
+// Remember that a browser was opened, so the same session never opens a second tab.
+function markSessionsOpened(projectId) {
+  let touched = 0;
+  for (const s of liveSessions()) {
+    if (s.project_id !== projectId || s.opened) continue;
+    try {
+      writeJsonAtomic(sessionFile(s.pid), { ...s, opened: true });
+      touched += 1;
+    } catch (e) {
+      // ignore
+    }
+  }
+  return touched;
 }
 
 // ---------- project resolution ----------
@@ -862,6 +986,8 @@ module.exports = {
   STATUSES,
   MAX_DEPTH,
   VERSION,
+  SESSION_TTL_MS,
+  SESSION_BEAT_MS,
   UserError,
   now,
   sleepSync,
@@ -869,6 +995,7 @@ module.exports = {
   port,
   baseUrl,
   projectUrl,
+  overviewUrl,
   projectIdFor,
   idNum,
   readJson,
@@ -880,6 +1007,15 @@ module.exports = {
   touchRegistry,
   listProjects,
   projectById,
+  sessionsDir,
+  sessionFile,
+  isLiveSession,
+  liveSessions,
+  liveSessionCounts,
+  writeSession,
+  removeSession,
+  sessionOpened,
+  markSessionsOpened,
   dataDir,
   mapFile,
   hasMap,

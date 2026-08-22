@@ -16,10 +16,18 @@ read it, do not re-derive it.
 
 Run `taskmap status`.
 
-- A map exists: `taskmap tree --open`, then `taskmap inbox`, then continue from
-  `taskmap next`. Do not re-plan what is already on the map.
+- A map exists: `taskmap open --if-needed` (it starts the server and opens the
+  dashboard only if nothing is watching this project), then `taskmap tree --open`,
+  then `taskmap inbox`, then continue from `taskmap next`. Do not re-plan what is
+  already on the map.
 - No map (`error: no taskmap here`): `taskmap init "<name>" --goal "<one sentence>"`,
-  then tell the user the dashboard URL once, in one line. Not again unless asked.
+  which does the same open, then tell the user the dashboard URL once, in one line.
+  Not again unless asked.
+
+Run `open --if-needed` **once**, here. It is not reopened later in the session, even
+if the user closes the tab — closing it is a choice. Run it again only when the
+project changes. With more than one project registered, the session-start line also
+names an overview page listing all of them.
 
 ## 2. Plan before code
 

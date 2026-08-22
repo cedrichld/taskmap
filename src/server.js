@@ -87,15 +87,27 @@ function optStr(v, name, max) {
   return v;
 }
 
-function projectSummary(p) {
-  const base = { id: p.id, name: p.name, path: p.path, updated: p.updated, exists: Boolean(p.exists) };
-  if (!p.exists) return { ...base, progress: null, in_progress: 0, unread: 0 };
+function projectSummary(p, { sessions = {}, clients = {} } = {}) {
+  const live = (sessions[p.id] || 0) > 0;
+  const base = { id: p.id, name: p.name, path: p.path, updated: p.updated, exists: Boolean(p.exists), live, sessions: sessions[p.id] || 0, clients: clients[p.id] || 0 };
+  if (!p.exists) return { ...base, goal: '', progress: null, in_progress: 0, in_progress_titles: [], blocked: 0, unread: 0 };
   try {
     const map = store.readMap(p.path);
     const pr = store.progress(map);
-    return { ...base, name: map.name || p.name, goal: map.goal || '', progress: { done: pr.done, total: pr.total }, in_progress: store.inProgressNodes(map).length, unread: store.unreadCount(map) };
+    const ip = store.inProgressNodes(map);
+    return {
+      ...base,
+      name: map.name || p.name,
+      goal: map.goal || '',
+      updated: map.updated || p.updated,
+      progress: { done: pr.done, total: pr.total },
+      in_progress: ip.length,
+      in_progress_titles: ip.map((n) => n.title),
+      blocked: store.blockedNodes(map).length,
+      unread: store.unreadCount(map),
+    };
   } catch (e) {
-    return { ...base, exists: false, progress: null, in_progress: 0, unread: 0, error: String(e.message || e) };
+    return { ...base, exists: false, goal: '', progress: null, in_progress: 0, in_progress_titles: [], blocked: 0, unread: 0, error: String(e.message || e) };
   }
 }
 
@@ -119,6 +131,18 @@ function start({ port = store.port(), host = '127.0.0.1' } = {}) {
       set.delete(res);
       if (!set.size) clients.delete(id);
     }
+  }
+
+  // Connected SSE clients: per project and overall.
+  function clientCounts() {
+    const projects = {};
+    let total = 0;
+    for (const [id, set] of clients) {
+      if (!set.size) continue;
+      projects[id] = set.size;
+      total += set.size;
+    }
+    return { total, projects };
   }
 
   function sendEvent(res, data) {
@@ -184,7 +208,19 @@ function start({ port = store.port(), host = '127.0.0.1' } = {}) {
 
     if (p.startsWith('/api/')) {
       if (p === '/api/projects' && method === 'GET') {
-        return sendJson(res, 200, { projects: store.listProjects().map(projectSummary) });
+        const sessions = store.liveSessionCounts();
+        const counts = clientCounts();
+        return sendJson(res, 200, { projects: store.listProjects().map((x) => projectSummary(x, { sessions, clients: counts.projects })) });
+      }
+      if (p === '/api/clients' && method === 'GET') {
+        const counts = clientCounts();
+        return sendJson(res, 200, {
+          ok: true,
+          total: counts.total,
+          projects: counts.projects,
+          sessions: store.liveSessionCounts(),
+          session_ttl_ms: store.SESSION_TTL_MS,
+        });
       }
       const m = p.match(/^\/api\/projects\/([^/]+)(?:\/(.+))?$/);
       if (!m) return sendJson(res, 404, { error: `no route ${method} ${p}` });
@@ -251,7 +287,18 @@ function start({ port = store.port(), host = '127.0.0.1' } = {}) {
       res.writeHead(204);
       return res.end();
     }
-    let rel = p === '/' ? 'index.html' : p.replace(/^\/+/, '');
+    // The overview is the root. `/?p=<id>` is the pre-0.2 project link: redirect it.
+    if (p === '/') {
+      const want = u.searchParams.get('p');
+      if (want) {
+        res.writeHead(302, { Location: `/p/${encodeURIComponent(want)}`, 'Cache-Control': 'no-store' });
+        return res.end();
+      }
+      return sendFile(res, path.join(UI_DIR, 'index.html'));
+    }
+    if (/^\/p\/[^/]+\/?$/.test(p)) return sendFile(res, path.join(UI_DIR, 'project.html'));
+
+    let rel = p.replace(/^\/+/, '');
     const file = path.resolve(UI_DIR, rel);
     if (!file.startsWith(UI_DIR + path.sep) && file !== UI_DIR) return sendJson(res, 404, { error: 'not found' });
     return sendFile(res, file);

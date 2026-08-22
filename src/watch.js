@@ -26,11 +26,64 @@ function formatInboxLine(ev) {
   }
 }
 
+// One heartbeat file per session, refreshed while the monitor runs and removed
+// when it stops, so the dashboard can show a live dot for sessions that exist.
+function heartbeat({ cwd = process.cwd(), beatMs = store.SESSION_BEAT_MS } = {}) {
+  const started = store.now();
+  let lastDir = null;
+  let lastId = null;
+
+  const beat = () => {
+    let projectId = lastId;
+    let dir = null;
+    try {
+      dir = store.resolveProjectDir({ cwd });
+    } catch (e) {
+      dir = null;
+    }
+    if (dir && dir !== lastDir) {
+      lastDir = dir;
+      try {
+        projectId = store.readMap(dir).id;
+      } catch (e) {
+        projectId = null;
+      }
+      lastId = projectId;
+    } else if (!dir) {
+      projectId = null;
+      lastId = null;
+      lastDir = null;
+    }
+    store.writeSession({ project_id: projectId, cwd, started });
+  };
+
+  beat();
+  const timer = setInterval(beat, beatMs);
+  timer.unref();
+
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    clearInterval(timer);
+    store.removeSession();
+  };
+  process.on('exit', cleanup);
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(sig, () => {
+      cleanup();
+      process.exit(0);
+    });
+  }
+  return cleanup;
+}
+
 // Blocks forever. Resolves the project from cwd, waiting until a map exists.
-function watch({ cwd = process.cwd(), out = process.stdout, pollMs = 500, waitMs = 2000 } = {}) {
+function watch({ cwd = process.cwd(), out = process.stdout, pollMs = 500, waitMs = 2000, beat = true } = {}) {
   let file = null;
   let offset = 0;
   let partial = '';
+  if (beat) heartbeat({ cwd });
 
   const emit = (line) => {
     let ev;
@@ -122,4 +175,4 @@ function watch({ cwd = process.cwd(), out = process.stdout, pollMs = 500, waitMs
   tick();
 }
 
-module.exports = { watch, formatInboxLine };
+module.exports = { watch, heartbeat, formatInboxLine };

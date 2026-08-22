@@ -8,7 +8,7 @@ const { spawn } = require('child_process');
 const store = require('./store');
 const { UserError } = store;
 
-const BOOL_FLAGS = new Set(['track', 'open', 'all', 'peek', 'json', 'force', 'batch', 'ensure', 'stop', 'restart', 'foreground', 'help', 'version', 'quiet']);
+const BOOL_FLAGS = new Set(['track', 'open', 'all', 'peek', 'json', 'force', 'batch', 'ensure', 'stop', 'restart', 'foreground', 'help', 'version', 'quiet', 'if-needed']);
 const LIST_FLAGS = new Set(['link', 'unlink']);
 
 const GLYPH = { pending: '[ ]', in_progress: '[~]', done: '[x]', blocked: '[!]', skipped: '[-]' };
@@ -60,11 +60,11 @@ function usage() {
     '  edit <id> [--title|--what|--why|--done-when|--parent|--order|--link|--unlink ..] [--force]',
     '  note <id> "<text>"',
     '  tree [--open|--all] [--depth N] | show <id> | next | inbox [--peek] | status | check [--json]',
-    '  serve [--ensure|--stop|--restart|--foreground] [--port N] | open | watch | demo | forget <project id>',
+    '  serve [--ensure|--stop|--restart|--foreground] [--port N] | open [--if-needed] | watch | demo | forget <project id>',
     '  export --obsidian <dir>       one markdown note per node with [[wikilinks]]',
     '  config [prompt-reminder on|off]',
     '  hook session-start|stop|prompt   (used by hooks/hooks.json)',
-    'global: --project <id> (or TASKMAP_PROJECT), TASKMAP_PORT, TASKMAP_HOME',
+    'global: --project <id> (or TASKMAP_PROJECT), TASKMAP_PORT, TASKMAP_HOME, TASKMAP_NO_BROWSER',
   ].join('\n');
 }
 
@@ -304,6 +304,7 @@ async function cmdInit({ pos, flags }) {
   if (!flags.goal) throw new UserError('init needs --goal "<one sentence>".');
   const map = store.initProject(cwd, { name, goal: flags.goal, track: Boolean(flags.track) });
   await ensureServer({ quiet: true });
+  await openIfNeeded(map.id);
   out(`n0  ${map.name}  ${store.projectUrl(map.id)}`);
 }
 
@@ -446,22 +447,89 @@ async function cmdServe({ flags }) {
   return ensureServer();
 }
 
-async function cmdOpen({ flags }) {
-  let url = store.baseUrl();
+function launchBrowser(url) {
+  if (process.env.TASKMAP_NO_BROWSER) return false; // headless runs and tests
+  const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
   try {
-    const { map } = loadMap(flags);
-    url = store.projectUrl(map.id);
-  } catch (e) {
-    // no project here: open the dashboard root
-  }
-  await ensureServer({ quiet: true });
-  try {
-    const child = spawn('xdg-open', [url], { detached: true, stdio: 'ignore' });
+    const child = spawn(cmd, [url], { detached: true, stdio: 'ignore', shell: process.platform === 'win32' });
     child.on('error', () => {});
     child.unref();
+    return true;
   } catch (e) {
-    // fall through: the URL is printed either way
+    return false; // the URL is printed either way
   }
+}
+
+function clients(timeoutMs = 800) {
+  return new Promise((resolve) => {
+    const req = http.get(`${store.baseUrl()}/api/clients`, { timeout: timeoutMs }, (res) => {
+      let body = '';
+      res.on('data', (d) => {
+        body += d;
+      });
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(body);
+          resolve(j && j.ok ? j : null);
+        } catch (e) {
+          resolve(null);
+        }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(null);
+    });
+  });
+}
+
+// Why we should not open a browser for this project, or null when we should.
+async function skipOpenReason(id) {
+  if (id && store.sessionOpened(id)) return 'already opened this session';
+  const c = await clients();
+  if (!c) return null; // no server answer: opening is the safer default
+  const n = id ? c.projects[id] || 0 : c.total;
+  if (n > 0) return n === 1 ? 'already open in a browser' : `already open in ${n} browsers`;
+  return null;
+}
+
+// Open a browser unless something is already watching. Returns the reason it
+// was skipped, or null when a browser was launched. Never throws.
+async function openIfNeeded(id) {
+  try {
+    const why = await skipOpenReason(id);
+    if (why) return why;
+    launchBrowser(id ? store.projectUrl(id) : store.overviewUrl());
+    // Remember it, so closing the tab does not make the session open a new one.
+    if (id) store.markSessionsOpened(id);
+    return null;
+  } catch (e) {
+    return 'could not open a browser';
+  }
+}
+
+// `open` always opens. `open --if-needed` opens only when nothing is already
+// watching this project, so a session never ends up with a second tab.
+async function cmdOpen({ flags }) {
+  let url = store.overviewUrl();
+  let id = null;
+  try {
+    const { map } = loadMap(flags);
+    id = map.id;
+    url = store.projectUrl(id);
+  } catch (e) {
+    // no project here: the overview is the right page
+  }
+  await ensureServer({ quiet: true });
+
+  if (flags.if_needed) {
+    const why = await openIfNeeded(id);
+    out(why ? `${url}  (${why})` : url);
+    return;
+  }
+  launchBrowser(url);
+  if (id) store.markSessionsOpened(id);
   out(url);
 }
 
@@ -544,6 +612,13 @@ async function hookSessionStart(input, cwd, flags) {
     return;
   }
   out(`[taskmap] Map found: ${map.name}, ${p.done}/${p.total} done, ${ip.length} in progress, ${blocked.length} blocked, ${unread} unread. Run /taskmap to resume.`);
+  let registered = 0;
+  try {
+    registered = store.listProjects().filter((x) => x.exists).length;
+  } catch (e) {
+    registered = 0;
+  }
+  if (registered > 1) out(`[taskmap] ${registered} projects are registered; the overview of all of them is ${store.overviewUrl()}.`);
 }
 
 // Stop: block once while a leaf is still in progress; stop_hook_active is the loop guard.

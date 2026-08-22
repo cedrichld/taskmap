@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>taskmap</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header id="header">
+  <div class="hrow">
+    <a class="brand" href="/" title="All projects">taskmap</a>
+    <a class="allproj" href="/" title="All projects">All projects</a>
+    <select id="project-select" aria-label="Project"></select>
+    <span id="project-name" class="pname"></span>
+    <span id="project-goal" class="pgoal"></span>
+    <span class="spacer"></span>
+    <span id="live" class="live connecting" title="Server-sent events feed"><i class="dot"></i><span id="live-text">connecting</span></span>
+    <span id="updated" class="mono muted" title="map.updated"></span>
+  </div>
+  <div class="hrow">
+    <div class="progress" title="done leaves / total leaves (skipped excluded)"><div id="progress-bar"></div></div>
+    <span class="plabel"><span id="progress-label" class="mono">0/0</span> leaves</span>
+    <span id="counts" class="counts"></span>
+    <a id="now" class="now" href="#" hidden title="What Claude is working on. Click to open it."></a>
+    <span class="spacer"></span>
+    <div class="seg" role="group" aria-label="View">
+      <button type="button" data-view="graph" aria-pressed="true">Graph</button>
+      <button type="button" data-view="outline" aria-pressed="false">Outline</button>
+    </div>
+    <button type="button" id="fit-btn" title="Fit the map to the window (f)">Fit</button>
+    <button type="button" id="add-top-btn" class="primary" aria-expanded="false">Add high-level task</button>
+  </div>
+  <form id="add-form" class="add-form" hidden>
+    <input id="add-title" placeholder="Title" maxlength="200" autocomplete="off" required>
+    <input id="add-what" placeholder="What (optional)" autocomplete="off">
+    <input id="add-why" placeholder="Why (optional)" autocomplete="off">
+    <button type="submit" class="primary">Add</button>
+    <button type="button" id="add-cancel">Cancel</button>
+    <span id="add-error" class="error" role="alert"></span>
+  </form>
+</header>
+
+<div id="waiting" class="waiting" hidden>
+  <span class="w-label">Waiting on you</span>
+  <ul id="waiting-list"></ul>
+</div>
+
+<div id="body">
+  <main id="main" class="view-graph">
+    <div id="notice" class="notice" hidden></div>
+    <svg id="graph" role="img" aria-label="Task map graph">
+      <defs>
+        <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0.5 L7,4 L0,7.5 Z"></path>
+        </marker>
+      </defs>
+      <g id="viewport">
+        <g id="edges"></g>
+        <g id="xlinks"></g>
+        <g id="nodes"></g>
+      </g>
+    </svg>
+    <div id="outline"></div>
+    <div id="empty" class="empty">No nodes yet. Claude adds them with <code>taskmap add</code>.</div>
+  </main>
+
+  <aside id="side">
+    <section id="panel">
+      <div id="panel-content" class="panel-content">
+        <div class="placeholder">Pick a bubble to see its details.</div>
+      </div>
+      <div id="panel-actions" class="panel-actions" hidden>
+        <label class="k" for="fb-text">Message Claude about this task</label>
+        <div class="composer">
+          <textarea id="fb-text" rows="1" placeholder="Tell Claude something about this task…"></textarea>
+          <div class="c-row">
+            <span class="muted hint">Ctrl+Enter sends · read on the next <span class="mono">taskmap inbox</span></span>
+            <button type="button" id="fb-send" class="primary" disabled>Send</button>
+          </div>
+        </div>
+        <div class="btnrow actions">
+          <button type="button" data-act="subtask">Add subtask</button>
+          <button type="button" data-act="reopen">Reopen</button>
+          <button type="button" data-act="block">Mark blocked</button>
+          <button type="button" data-act="skip">Not needed</button>
+          <button type="button" data-act="done">Mark done</button>
+        </div>
+        <form id="inline-form" class="inline-form" hidden>
+          <label id="inline-label" class="k" for="inline-input"></label>
+          <div class="btnrow">
+            <input id="inline-input" autocomplete="off" maxlength="1000">
+            <button type="submit" class="primary" id="inline-ok">OK</button>
+            <button type="button" id="inline-cancel">Cancel</button>
+          </div>
+        </form>
+        <div id="panel-error" class="error" role="alert" hidden></div>
+      </div>
+    </section>
+    <section id="activity">
+      <button type="button" class="sec-head" id="activity-toggle" aria-expanded="true">
+        <span>Activity</span>
+        <span id="activity-count" class="muted mono"></span>
+      </button>
+      <div id="activity-list"></div>
+    </section>
+  </aside>
+</div>
+
+<script src="/vendor/d3.v7.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

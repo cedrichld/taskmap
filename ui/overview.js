@@ -1,0 +1,111 @@
+'use strict';
+/* taskmap overview — one card per registered project. Contract: docs/SPEC.md sections 6, 7. */
+
+const $ = (sel, el) => (el || document).querySelector(sel);
+const POLL_MS = 2000;
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function ago(iso) {
+  const s = Math.round((Date.now() - new Date(iso)) / 1000);
+  if (!iso || isNaN(s)) return '';
+  if (s < 45) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return d < 30 ? `${d}d ago` : new Date(iso).toISOString().slice(0, 10);
+}
+
+const state = { projects: [], failures: 0 };
+
+function setLive(kind, text) {
+  const el = $('#ov-live');
+  el.className = `live ${kind}`;
+  $('#ov-live-text').textContent = text;
+}
+
+function notice(msg) {
+  const el = $('#ov-notice');
+  el.hidden = !msg;
+  el.textContent = msg || '';
+}
+
+// Live sessions first, then most recently changed.
+function sortProjects(list) {
+  return list.slice().sort((a, b) => {
+    if (Boolean(b.live) !== Boolean(a.live)) return b.live ? 1 : -1;
+    return String(b.updated || '').localeCompare(String(a.updated || ''));
+  });
+}
+
+function cardHtml(p) {
+  const pr = p.progress || { done: 0, total: 0 };
+  const pct = pr.total ? Math.round((pr.done / pr.total) * 100) : 0;
+  const chips = [];
+  if (p.blocked) chips.push(`<span class="chip warn">${p.blocked} blocked</span>`);
+  if (p.unread) chips.push(`<span class="chip accent">${p.unread} unread</span>`);
+  const now = (p.in_progress_titles || []).slice(0, 3);
+  const more = (p.in_progress_titles || []).length - now.length;
+  const nowHtml = p.exists && now.length
+    ? `<ul class="ov-now">${now.map((t) => `<li><i class="rundot"></i>${esc(t)}</li>`).join('')}${more > 0 ? `<li class="muted">and ${more} more</li>` : ''}</ul>`
+    : `<p class="ov-idle">${p.exists ? (pr.total && pr.done === pr.total ? 'All done.' : 'Nothing in progress.') : 'Directory missing.'}</p>`;
+
+  return `<li class="ov-card${p.live ? ' is-live' : ''}${p.exists ? '' : ' is-gone'}" data-id="${esc(p.id)}">
+    <a class="ov-hit" href="/p/${encodeURIComponent(p.id)}">
+      <div class="ov-top">
+        <h2 class="ov-name">${esc(p.name)}</h2>
+        ${p.live ? '<span class="ov-livedot" title="A Claude Code session is running here"><i></i>live</span>' : ''}
+      </div>
+      <p class="ov-goal">${esc(p.goal || '')}</p>
+      ${nowHtml}
+      <div class="ov-bar" role="img" aria-label="${pr.done} of ${pr.total} leaves done"><i style="transform:scaleX(${pr.total ? pr.done / pr.total : 0})"></i></div>
+      <div class="ov-foot">
+        <span class="ov-count mono">${pr.done}/${pr.total}</span>
+        <span class="muted">${pct}%</span>
+        ${chips.join('')}
+        <span class="spacer"></span>
+        <span class="muted ov-when">${esc(ago(p.updated))}</span>
+      </div>
+    </a>
+  </li>`;
+}
+
+function render() {
+  const list = sortProjects(state.projects);
+  const grid = $('#ov-grid');
+  const html = list.map(cardHtml).join('');
+  if (grid._sig !== html) {
+    grid.innerHTML = html;
+    grid._sig = html;
+  }
+  $('#ov-empty').hidden = list.length > 0;
+  const live = list.filter((p) => p.live).length;
+  document.title = live ? `(${live}) taskmap — all projects` : 'taskmap — all projects';
+}
+
+async function poll() {
+  try {
+    const res = await fetch('/api/projects');
+    if (!res.ok) throw new Error(`The server answered ${res.status}.`);
+    const data = await res.json();
+    state.projects = data.projects || [];
+    state.failures = 0;
+    notice('');
+    const live = state.projects.filter((p) => p.live).length;
+    setLive('on', live ? `${live} session${live > 1 ? 's' : ''} running` : 'no sessions running');
+    render();
+  } catch (e) {
+    state.failures += 1;
+    if (state.failures > 1) {
+      setLive('off', 'disconnected');
+      notice('Could not reach the taskmap server. Start it with: taskmap serve --ensure');
+    }
+  }
+}
+
+poll();
+setInterval(poll, POLL_MS);
+setInterval(render, 30000); // keep the "3m ago" labels honest while nothing changes

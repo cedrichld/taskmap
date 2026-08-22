@@ -59,6 +59,13 @@ const state = {
   userMoved: false, layoutSig: null, drafts: {}, inlineMode: null,
 };
 const projPath = () => `/api/projects/${encodeURIComponent(state.pid)}`;
+const projectPath = (id) => `/p/${encodeURIComponent(id)}`;
+// `/p/<id>` is the project page; `/?p=<id>` still arrives from older links and bookmarks.
+function wantedProject() {
+  const m = location.pathname.match(/^\/p\/([^/]+)\/?$/);
+  if (m) return decodeURIComponent(m[1]);
+  return new URLSearchParams(location.search).get('p');
+}
 const rootId = () => (state.map ? state.map.root : 'n0');
 const nodeOf = (id) => (state.map ? state.map.nodes[id] : undefined);
 
@@ -804,7 +811,7 @@ function switchProject(id) {
   renderProjects();
   applyView();
   renderPanel();
-  history.replaceState(null, '', `/?p=${encodeURIComponent(id)}`);
+  history.replaceState(null, '', projectPath(id));
   loadProject().then(connect);
 }
 
@@ -908,7 +915,7 @@ async function init() {
     setLive('off');
     return;
   }
-  const want = new URLSearchParams(location.search).get('p');
+  const want = wantedProject();
   const exists = state.projects.filter((p) => p.exists);
   const pick = exists.find((p) => p.id === want) || exists[0];
   renderProjects();

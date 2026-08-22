@@ -38,12 +38,23 @@ equals() { # label actual expected
   if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (got '$2', expected '$3')"; fi
 }
 
+# A fake browser, on PATH before anything runs: init and `open` launch one now.
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/xdg-open" <<'XDG'
+#!/bin/sh
+echo "$1" >> "$XDG_LOG"
+XDG
+chmod +x "$TMP/bin/xdg-open"
+export XDG_LOG="$TMP/opened.txt"
+: > "$XDG_LOG"
+export PATH="$TMP/bin:$PATH"
+
 mkdir -p "$TMP/proj" && cd "$TMP/proj" && git init -q
 
 # ---- init -------------------------------------------------------------
 out=$("$TM" init "Pac-Man clone" --goal "A playable Pac-Man in the browser" 2>&1)
 equals "init exits 0" "$?" "0"
-contains "init prints root id and url" "$out" "n0  Pac-Man clone  $URL/?p="
+contains "init prints root id and url" "$out" "n0  Pac-Man clone  $URL/p/"
 contains "init writes .gitignore" "$(cat .gitignore)" ".taskmap/"
 out=$("$TM" init "again" --goal "x" 2>&1)
 equals "init is idempotent" "$?" "0"
@@ -133,6 +144,7 @@ contains "api log tail" "$full" '"type":"init"'
 # SSE: a map event within 1 s of a CLI change
 SSE="$TMP/sse.txt"
 curl -s -N --max-time 5 "$URL/api/projects/$ID/events" >"$SSE" 2>/dev/null &
+SSE1=$!
 sleep 0.7
 "$TM" note n4 "walls are 32px tall" >/dev/null 2>&1
 for _ in $(seq 1 20); do
@@ -141,6 +153,7 @@ for _ in $(seq 1 20); do
 done
 n=$(grep -c '"type":"map"' "$SSE" 2>/dev/null)
 [ "${n:-0}" -ge 2 ] && ok "SSE delivers a map event within 1 s of a CLI change" || bad "SSE map events: ${n:-0}"
+kill $SSE1 2>/dev/null; wait $SSE1 2>/dev/null
 
 # feedback round trip: curl POST -> inbox
 r=$(curl -s -X POST "$URL/api/projects/$ID/feedback" -H 'content-type: application/json' -d '{"node":"n4","text":"walls should be half as tall"}')
@@ -165,6 +178,82 @@ equals "unknown status is 400" "$code" "400"
 code=$(curl -s -o /dev/null -w '%{http_code}' "$URL/api/projects/nope")
 equals "unknown project is 404" "$code" "404"
 contains "ui index served" "$(curl -s "$URL/")" "<html"
+
+# ---- pages: overview at /, project at /p/<id>, old ?p= redirects ------
+contains "overview page at /" "$(curl -s "$URL/")" 'src="/overview.js"'
+contains "project page at /p/<id>" "$(curl -s "$URL/p/$ID")" 'src="/app.js"'
+loc=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$URL/?p=$ID")
+equals "old ?p= link redirects" "$loc" "302 $URL/p/$ID"
+
+# ---- /api/clients and session heartbeats ------------------------------
+wait_clients() { # wait_clients <n>
+  for _ in $(seq 1 40); do
+    [ "$(curl -s "$URL/api/clients" | sed -n 's/.*"total":\([0-9]*\).*/\1/p')" = "$1" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+wait_clients 0 || bad "clients did not settle to 0" "$(curl -s "$URL/api/clients")"
+c=$(curl -s "$URL/api/clients")
+contains "clients is ok" "$c" '"ok":true'
+contains "clients reports a total" "$c" '"total":0'
+contains "clients reports sessions" "$c" '"sessions":{}'
+SSE2="$TMP/sse2.txt"
+curl -s -N --max-time 4 "$URL/api/projects/$ID/events" >"$SSE2" 2>/dev/null &
+SSEPID=$!
+wait_clients 1 || true
+c=$(curl -s "$URL/api/clients")
+contains "clients counts an SSE listener" "$c" "\"$ID\":1"
+contains "clients totals it" "$c" '"total":1'
+contains "projects reports the client count" "$(curl -s "$URL/api/projects")" '"clients":1'
+
+# open --if-needed does not open while a browser is watching
+out=$("$TM" open --if-needed 2>&1)
+contains "open --if-needed skips a watched project" "$out" "already open in a browser"
+kill $SSEPID 2>/dev/null; wait $SSEPID 2>/dev/null
+wait_clients 0 || true
+equals "clients drops to 0 when the listener leaves" "$(curl -s "$URL/api/clients" | sed -n 's/.*"total":\([0-9]*\).*/\1/p')" "0"
+
+# a fresh heartbeat is live, a 90 s old one is not (and is pruned)
+node -e '
+const store = require(process.argv[1]);
+store.writeSession({ pid: 424242, project_id: process.argv[2], cwd: "/tmp" });
+' "$HERE/src/store.js" "$ID"
+contains "a fresh heartbeat is live" "$(curl -s "$URL/api/clients")" "\"sessions\":{\"$ID\":1}"
+contains "projects shows the live dot" "$(curl -s "$URL/api/projects")" '"live":true'
+node -e '
+const fs = require("fs"), path = require("path");
+const store = require(process.argv[1]);
+const f = store.sessionFile(424242);
+const old = new Date(Date.now() - 90000).toISOString();
+const rec = JSON.parse(fs.readFileSync(f, "utf8"));
+fs.writeFileSync(f, JSON.stringify({ ...rec, last_seen: old }));
+' "$HERE/src/store.js"
+contains "a 90 s old heartbeat is not live" "$(curl -s "$URL/api/clients")" '"sessions":{}'
+contains "projects drops the live dot" "$(curl -s "$URL/api/projects")" '"live":false'
+[ -e "$TASKMAP_HOME/sessions/424242.json" ] && bad "stale heartbeat not pruned" || ok "stale heartbeat is pruned"
+
+# ---- open --if-needed opens once per session --------------------------
+contains "init opened the dashboard once" "$(cat "$XDG_LOG")" "$URL/p/$ID"
+equals "init opened exactly one tab" "$(wc -l < "$XDG_LOG" | tr -d ' ')" "1"
+: > "$XDG_LOG"
+node -e '
+const store = require(process.argv[1]);
+store.writeSession({ pid: 424243, project_id: process.argv[2], cwd: process.argv[3] });
+' "$HERE/src/store.js" "$ID" "$PWD"
+out=$("$TM" open --if-needed 2>&1)
+contains "open --if-needed opens the project page" "$out" "$URL/p/$ID"
+not_contains "open --if-needed opened it for real" "$out" "already"
+out=$("$TM" open --if-needed 2>&1)
+contains "open --if-needed will not open a second tab" "$out" "already opened this session"
+"$TM" open --if-needed >/dev/null 2>&1
+equals "browser launched exactly once" "$(wc -l < "$XDG_LOG" | tr -d ' ')" "1"
+"$TM" open >/dev/null 2>&1
+equals "plain open always opens" "$(wc -l < "$XDG_LOG" | tr -d ' ')" "2"
+node -e '
+const store = require(process.argv[1]);
+store.removeSession(424243);
+' "$HERE/src/store.js"
 
 # ---- check ------------------------------------------------------------
 out=$("$TM" check 2>&1)

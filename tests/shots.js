@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// Headless render of the dashboard: node tests/shots.js <projectId> <WxH> <out.png> [select=<nodeId>] [view=outline]
+// Headless render of the dashboard: node tests/shots.js <projectId|/path> <WxH> <out.png> [select=<nodeId>] [view=outline] [mobile=1]
 // Drives Chrome over the DevTools protocol (an open SSE stream keeps --virtual-time-budget from ever settling).
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -9,7 +9,8 @@ const path = require('path');
 const os = require('os');
 
 const [PID, SIZE, OUT, ...REST] = process.argv.slice(2);
-if (!PID || !SIZE || !OUT) { console.error('usage: shots.js <projectId> <WxH> <out.png> [select=<id>] [view=outline]'); process.exit(2); }
+if (!PID || !SIZE || !OUT) { console.error('usage: shots.js <projectId|/path> <WxH> <out.png> [select=<id>] [view=outline] [mobile=1]'); process.exit(2); }
+const PATHNAME = PID.startsWith('/') ? PID : `/p/${encodeURIComponent(PID)}`;
 const opts = Object.fromEntries(REST.map((a) => a.split('=')));
 const [W, H] = SIZE.split('x').map(Number);
 const PORT = 9400 + Math.floor(Math.random() * 400);
@@ -48,24 +49,36 @@ async function main() {
       return r.result.result.value;
     };
     await send('Runtime.enable'); await send('Log.enable'); await send('Page.enable');
-    await send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false });
-    await send('Page.navigate', { url: `${BASE}/?p=${PID}` });
+    const mobile = Boolean(opts.mobile && opts.mobile !== '0');
+    await send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: mobile ? 2 : 1, mobile });
+    if (mobile) await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+    await send('Page.navigate', { url: `${BASE}${PATHNAME}` });
     await sleep(2000);
-    if (opts.view) { await evaluate(`document.querySelector('.seg button[data-view="${opts.view}"]').click(); 'ok'`); await sleep(300); }
-    if (opts.select) { await evaluate(`document.querySelector('.card[data-id="${opts.select}"]').click(); 'ok'`); await sleep(500); }
-    const info = await evaluate(`JSON.stringify({
-      live: document.querySelector('#live-text').textContent,
-      cards: document.querySelectorAll('#nodes .card').length,
-      rows: document.querySelectorAll('#outline .row').length,
-      progress: document.querySelector('#progress-label').textContent,
-      waiting: document.querySelectorAll('#waiting-list li').length,
-      now: (document.querySelector('#now')||{textContent:''}).textContent.trim(),
-      transform: document.querySelector('#viewport').getAttribute('transform'),
-      main: [document.querySelector('#main').clientWidth, document.querySelector('#main').clientHeight],
-      minTitlePx: Math.min(...[...document.querySelectorAll('#nodes .card .title')].map((t) => t.getBoundingClientRect().height)),
-      clippedReasons: [...document.querySelectorAll('#nodes .card .reason')].filter((r) => r.scrollHeight > r.clientHeight + 1).length,
-      overflowTitles: [...document.querySelectorAll('#nodes .card .title')].filter((r) => r.scrollHeight > r.clientHeight + 1).length,
-    })`);
+    if (opts.view) { await evaluate(`(document.querySelector('.seg button[data-view="${opts.view}"]')||{click(){}}).click(); 'ok'`); await sleep(300); }
+    if (opts.select) { await evaluate(`(document.querySelector('.card[data-id="${opts.select}"]')||{click(){}}).click(); 'ok'`); await sleep(500); }
+    const info = await evaluate(`(() => {
+      const q = (s) => document.querySelector(s);
+      const t = (s) => (q(s) || { textContent: '' }).textContent.trim();
+      const n = (s) => document.querySelectorAll(s).length;
+      const base = {
+        page: document.body.classList.contains('overview') ? 'overview' : 'project',
+        hScroll: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        tapTargetsUnder44: [...document.querySelectorAll('button, a.ov-hit, .seg button, .bottom-tab')]
+          .filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && Math.min(r.width, r.height) < 44; }).length,
+      };
+      if (base.page === 'overview') return JSON.stringify({ ...base,
+        live: t('#ov-live-text'), cards: n('.ov-card'), liveCards: n('.ov-card.is-live') });
+      return JSON.stringify({ ...base,
+        live: t('#live-text'), cards: n('#nodes .card'), rows: n('#outline .row'),
+        progress: t('#progress-label'), waiting: n('#waiting-list li'), now: t('#now'),
+        view: q('#main').className,
+        transform: (q('#viewport') || { getAttribute: () => '' }).getAttribute('transform'),
+        main: [q('#main').clientWidth, q('#main').clientHeight],
+        minTitlePx: Math.min(...[...document.querySelectorAll('#nodes .card .title')].map((e) => e.getBoundingClientRect().height)),
+        clippedReasons: [...document.querySelectorAll('#nodes .card .reason')].filter((e) => e.scrollHeight > e.clientHeight + 1).length,
+        overflowTitles: [...document.querySelectorAll('#nodes .card .title')].filter((e) => e.scrollHeight > e.clientHeight + 1).length,
+      });
+    })()`);
     const r = await send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(OUT, Buffer.from(r.result.data, 'base64'));
     console.log(`${OUT}: ${info}`);
