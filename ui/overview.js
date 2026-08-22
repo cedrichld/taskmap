@@ -33,10 +33,12 @@ function notice(msg) {
   el.textContent = msg || '';
 }
 
-// Live sessions first, then most recently changed.
+// Live sessions first, then whatever is waiting on you, then most recently changed.
+const needs = (p) => (p.blocked || 0) + (p.unread || 0);
 function sortProjects(list) {
   return list.slice().sort((a, b) => {
     if (Boolean(b.live) !== Boolean(a.live)) return b.live ? 1 : -1;
+    if (needs(b) !== needs(a)) return needs(b) - needs(a);
     return String(b.updated || '').localeCompare(String(a.updated || ''));
   });
 }
@@ -49,18 +51,29 @@ function cardHtml(p) {
   if (p.unread) chips.push(`<span class="chip accent">${p.unread} unread</span>`);
   const now = (p.in_progress_titles || []).slice(0, 3);
   const more = (p.in_progress_titles || []).length - now.length;
-  const nowHtml = p.exists && now.length
-    ? `<ul class="ov-now">${now.map((t) => `<li><i class="rundot"></i>${esc(t)}</li>`).join('')}${more > 0 ? `<li class="muted">and ${more} more</li>` : ''}</ul>`
-    : `<p class="ov-idle">${p.exists ? (pr.total && pr.done === pr.total ? 'All done.' : 'Nothing in progress.') : 'Directory missing.'}</p>`;
+  const check = '<svg class="ic" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg>';
+  let nowHtml;
+  if (p.exists && now.length) {
+    // In progress with nobody working on it is a stalled run, not a healthy one.
+    const stalled = !p.live ? '<p class="ov-stalled">no session running</p>' : '';
+    nowHtml = `<ul class="ov-now">${now.map((t) => `<li><i class="rundot"></i>${esc(t)}</li>`).join('')}${more > 0 ? `<li class="muted">and ${more} more</li>` : ''}</ul>${stalled}`;
+  } else if (!p.exists) {
+    nowHtml = '<p class="ov-idle">Directory missing.</p>';
+  } else if (pr.total && pr.done === pr.total) {
+    nowHtml = `<p class="ov-idle done">${check}All done.</p>`;
+  } else {
+    nowHtml = '<p class="ov-idle">Nothing in progress.</p>';
+  }
 
-  return `<li class="ov-card${p.live ? ' is-live' : ''}${p.exists ? '' : ' is-gone'}" data-id="${esc(p.id)}">
+  return `<li class="ov-card${p.live ? ' is-live' : ''}${needs(p) ? ' needs-you' : ''}${p.exists ? '' : ' is-gone'}" data-id="${esc(p.id)}">
     <a class="ov-hit" href="/p/${encodeURIComponent(p.id)}">
       <div class="ov-top">
         <h2 class="ov-name">${esc(p.name)}</h2>
         ${p.live ? '<span class="ov-livedot" title="A Claude Code session is running here"><i></i>live</span>' : ''}
       </div>
-      <p class="ov-goal">${esc(p.goal || '')}</p>
+      <p class="ov-goal" title="${esc(p.goal || '')}">${esc(p.goal || '')}</p>
       ${nowHtml}
+      <span class="ov-spacer"></span>
       <div class="ov-bar" role="img" aria-label="${pr.done} of ${pr.total} leaves done"><i style="transform:scaleX(${pr.total ? pr.done / pr.total : 0})"></i></div>
       <div class="ov-foot">
         <span class="ov-count mono">${pr.done}/${pr.total}</span>

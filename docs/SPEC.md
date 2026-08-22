@@ -426,12 +426,26 @@ data: {"type":"ping"}
   overview grid becomes one column under 640 px.
 - The graph is fit and centered on load and after every structural change
   (nodes added or removed, a fold toggled) unless the user has panned or zoomed;
-  Fit / `f` restores auto-fit. Blocked nodes show their reason on the card (two
+  Fit / `f` restores auto-fit. It is centered in the free area — the window minus
+  the header, the Waiting-on-you strip and the side panel, all of which float over
+  the canvas — and capped at 1.25x, or 1.7x on windows 1900 px and wider.
+- Stacked leaves wrap into up to four columns. `bestLayout()` lays the tree out at
+  one to four columns and keeps whichever yields the largest fit scale, requiring a
+  3 % gain before spending the extra width.
+- Status on a node is a ring plus a shaped mark (hollow / filled / check / bar /
+  struck), never hue alone. Only the in-progress leaf carries full accent and the
+  breathing halo; its ancestors get the same ring at 30 % and no halo.
+- With nothing selected the panel shows the first blocked node's question and an
+  Answer button, or what Claude is working on, or "All done"; then the status legend
+  and the keyboard shortcuts.
+- Every status write from the panel leaves an Undo for 12 seconds that writes the
+  previous status back. Blocked nodes show their reason on the card (two
   lines, then ellipsis) and in a "Waiting on you" strip under the header with a
   Reply control that focuses the feedback box on that node.
 - The UI never marks feedback read on its own.
-- Visual language: `docs/design/DESIGN.md`. Headless renders: `tests/shots.js`;
-  a 40-node fixture: `tests/gen40.js`.
+- Visual language: `docs/design/DESIGN.md`. Headless renders:
+  `node tests/shots.js <projectId|/path> <WxH> <out.png> [select=<id>] [view=outline]
+  [mobile=1]`; a 40-node fixture: `tests/gen40.js`.
 
 ## 8. Plugin wiring
 

@@ -8,10 +8,22 @@ const LABEL = { pending: 'pending', in_progress: 'in progress', done: 'done', bl
 const ACTOR = { cli: 'Claude', ui: 'You' };
 const VERB = { init: 'created', add: 'added', start: 'started', done: 'finished', block: 'blocked', skip: 'skipped', reopen: 'reopened', edit: 'edited', note: 'noted on', feedback: 'commented on', status: 'set', read: 'read' };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const ICON = {
+  chevron: '<path d="M6 4l4 4-4 4"/>',
+  back: '<path d="M10 4L6 8l4 4"/>',
+  close: '<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>',
+  plus: '<path d="M8 4v8M4 8h8"/>',
+  reply: '<path d="M6.5 4L3 7.5 6.5 11"/><path d="M3 7.5h6a4 4 0 0 1 4 4V13"/>',
+  fit: '<path d="M3 6V3h3M13 6V3h-3M3 10v3h3M13 10v3h-3"/>',
+  message: '<path d="M13 9.5A1.5 1.5 0 0 1 11.5 11H6l-3 2.5V4.5A1.5 1.5 0 0 1 4.5 3h7A1.5 1.5 0 0 1 13 4.5z"/>',
+  check: '<path d="M3.5 8.5l3 3 6-7"/>',
+};
+const icon = (name, cls) =>
+  `<svg class="ic${cls ? ' ' + cls : ''}" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICON[name] || ''}</svg>`;
 const REDUCED = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const NARROW_Q = window.matchMedia && window.matchMedia('(max-width: 767px)');
 const narrow = () => Boolean(NARROW_Q && NARROW_Q.matches);
-const DUR = REDUCED ? 0 : 320;
+const DUR = REDUCED ? 0 : 280;
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -133,8 +145,8 @@ function isClosed(id) {
 }
 
 // ---------- bubbles (shared by graph and outline) ----------
-const SIZE = { root: { w: 200, h: 58 }, parent: { w: 176, h: 50 }, leaf: { w: 156, h: 48 } };
-const BLOCK_EXTRA = 30; // two lines of reason under the title
+const SIZE = { root: { w: 208, h: 54 }, parent: { w: 188, h: 46 }, leaf: { w: 176, h: 34 } };
+const BLOCK_EXTRA = 32; // two lines of reason under the title
 function kindOf(id) { return id === rootId() ? 'root' : hasKids(id) ? 'parent' : 'leaf'; }
 function sizeOf(n) {
   const k = kindOf(n.id);
@@ -149,13 +161,13 @@ function cardHtml(n, opts) {
   if (kind !== 'leaf') {
     const p = progressOf(n.id);
     badge = opts.collapsed
-      ? `<span class="badge fold" title="${p.done} of ${p.total} leaves done. Click to unfold.">${p.done}/${p.total}<i>▸</i></span>`
+      ? `<span class="badge fold" title="${p.done} of ${p.total} leaves done. Click to unfold.">${p.done}/${p.total}${icon('chevron')}</span>`
       : `<span class="badge" title="${p.done} of ${p.total} leaves done. Click to fold.">${p.done}/${p.total}</span>`;
   }
   const reason = n.status === 'blocked' ? `<div class="reason">${esc(question(n.status_reason))}</div>` : '';
   const status = opts.status ? `<span class="status">${LABEL[n.status] || esc(n.status)}</span>` : '';
   const unread = unreadOf(n) ? `<i class="unread" title="${unreadOf(n)} unread feedback"></i>` : '';
-  return `<div class="body"><div class="title">${esc(n.title)}</div>${reason}</div>${badge}${status}${unread}`;
+  return `<i class="sdot" aria-hidden="true"></i><div class="body"><div class="title">${esc(n.title)}</div>${reason}</div>${badge}${status}${unread}`;
 }
 function cardTitle(n) {
   const bits = [n.title];
@@ -183,15 +195,39 @@ const gView = d3.select('#viewport');
 const gEdges = d3.select('#edges');
 const gX = d3.select('#xlinks');
 const gNodes = d3.select('#nodes');
+// The dot grid is ground, not wallpaper: it tracks pan and zoom, and fades out at
+// both ends of the range so a zoomed-out map is not sitting on moire.
+const gridPattern = document.getElementById('dots');
+const gridRect = document.getElementById('grid');
+function gridOpacity(k) {
+  if (k <= 0.5 || k >= 2.4) return 0;
+  if (k < 0.85) return (k - 0.5) / 0.35;
+  if (k > 1.6) return (2.4 - k) / 0.8;
+  return 1;
+}
+function syncGrid(t) {
+  if (!gridPattern || !gridRect) return;
+  gridPattern.setAttribute('patternTransform', `translate(${t.x},${t.y}) scale(${t.k})`);
+  gridRect.style.opacity = gridOpacity(t.k);
+}
 const zoom = d3.zoom().scaleExtent([0.08, 3]).on('zoom', (e) => {
   gView.attr('transform', e.transform);
+  syncGrid(e.transform);
   if (e.sourceEvent) state.userMoved = true;
 });
 svg.call(zoom).on('dblclick.zoom', null);
 let layoutNodes = [];
 let layoutLinks = [];
 
-function layout() {
+// How many columns a stack of `n` leaves breaks into. One column keeps a small
+// group readable; a long one turns the whole drawing into a tall thin ribbon in an
+// empty canvas, which is the single worst thing this view can do.
+function stackColumns(n, maxCols) {
+  if (n < 5 || maxCols < 2) return 1;
+  return Math.min(maxCols, Math.ceil(n / 4));
+}
+
+function layout(maxCols = 1) {
   const build = (id, depth, parent) => {
     const n = nodeOf(id);
     const s = sizeOf(n);
@@ -207,7 +243,14 @@ function layout() {
     it.branches = it.children.filter((c) => c.children.length > 0);
     for (const c of it.stack) { c.stacked = true; all.push(c); }
     for (const c of it.branches) measure(c);
-    it.stackW = it.stack.length ? Math.max(...it.stack.map((c) => c.w)) + STACK_INDENT : 0;
+    it.cols = [];
+    if (it.stack.length) {
+      const n = stackColumns(it.stack.length, maxCols);
+      const per = Math.ceil(it.stack.length / n);
+      for (let i = 0; i < it.stack.length; i += per) it.cols.push(it.stack.slice(i, i + per));
+    }
+    it.colW = it.stack.length ? Math.max(...it.stack.map((c) => c.w)) + STACK_INDENT : 0;
+    it.stackW = it.cols.length ? it.colW * it.cols.length + COL_GAP * (it.cols.length - 1) : 0;
     it.branchW = it.branches.reduce((s, c) => s + c.width, 0) + Math.max(0, it.branches.length - 1) * COL_GAP;
     it.inner = it.stackW + (it.stackW && it.branchW ? COL_GAP : 0) + it.branchW;
     it.width = Math.max(it.w, it.inner);
@@ -221,15 +264,19 @@ function layout() {
     it.x = left + it.width / 2;
     it.y = rowY[it.depth];
     let cursor = left + (it.width - it.inner) / 2;
-    if (it.stack.length) {
-      let y = rowY[it.depth + 1];
-      for (const c of it.stack) {
-        c.x = cursor + STACK_INDENT + c.w / 2;
-        c.y = y;
-        y += c.h + STACK_GAP;
+    if (it.cols.length) {
+      it.spineX = [];
+      for (const col of it.cols) {
+        let y = rowY[it.depth + 1];
+        for (const c of col) {
+          c.x = cursor + STACK_INDENT + c.w / 2;
+          c.y = y;
+          y += c.h + STACK_GAP;
+        }
+        it.spineX.push(cursor + 1);
+        cursor += it.colW + COL_GAP;
       }
-      it.spineX = cursor + 1;
-      cursor += it.stackW + COL_GAP;
+      cursor += COL_GAP - COL_GAP; // columns already carry their own gap
     }
     for (const c of it.branches) { place(c, cursor); cursor += c.width + COL_GAP; }
   };
@@ -238,9 +285,11 @@ function layout() {
   const links = [];
   for (const it of all) {
     for (const c of it.branches || []) links.push({ key: c.id, kind: 'branch', s: it, t: c });
-    if (it.stack && it.stack.length) {
-      links.push({ key: `${it.id}:spine`, kind: 'spine', s: it, items: it.stack, x: it.spineX });
-      for (const c of it.stack) links.push({ key: c.id, kind: 'elbow', s: it, t: c, x: it.spineX });
+    for (let i = 0; i < (it.cols || []).length; i++) {
+      const col = it.cols[i];
+      const x = it.spineX[i];
+      links.push({ key: `${it.id}:spine:${i}`, kind: 'spine', s: it, items: col, x });
+      for (const c of col) links.push({ key: c.id, kind: 'elbow', s: it, t: c, x });
     }
   }
   layoutLinks = links;
@@ -253,8 +302,10 @@ function ribbonPath(l) {
   return `M${x0 - a},${y0} C${x0 - a},${m} ${x1 - b},${m} ${x1 - b},${y1} L${x1 + b},${y1} C${x1 + b},${m} ${x0 + a},${m} ${x0 + a},${y0} Z`;
 }
 function spinePath(l) {
-  // Leaves the parent near its left corner when the stack column sits far to the left.
-  const x0 = Math.max(l.x, l.s.x - l.s.w / 2 + 22); const y0 = l.s.y + l.s.h - 2;
+  // Leaves the parent's own edge, wherever this column sits.
+  const lo = l.s.x - l.s.w / 2 + 22;
+  const hi = l.s.x + l.s.w / 2 - 22;
+  const x0 = Math.min(hi, Math.max(lo, l.x)); const y0 = l.s.y + l.s.h - 2;
   const first = l.items[0]; const last = l.items[l.items.length - 1];
   const yTop = first.y + first.h / 2;
   const yEnd = last.y + last.h / 2;
@@ -305,7 +356,7 @@ function xlinkData(items) {
 const tf = (d, k) => `translate(${d.x},${d.y}) scale(${k == null ? 1 : k})`;
 function renderGraph() {
   const first = !layoutNodes.length;
-  layout();
+  bestLayout();
   const sig = layoutNodes.map((d) => `${d.id}:${d.h}`).join(',');
   const structural = sig !== state.layoutSig;
   state.layoutSig = sig;
@@ -350,24 +401,64 @@ function applyXlinks() {
   gX.selectAll('path').classed('show', (d) => ids.has(d.from) || ids.has(d.to));
 }
 const FIT_PAD = 24;
+// Halos sit 8 px outside the box, dashed rings 5, count badges 9 below, unread dots
+// 3 above-right, and spines 14 px to the left. Measure what is drawn, not the boxes.
+const DECOR = 14;
 function bounds() {
   let x0 = Infinity; let x1 = -Infinity; let y0 = Infinity; let y1 = -Infinity;
   for (const d of layoutNodes) {
     x0 = Math.min(x0, d.x - d.w / 2); x1 = Math.max(x1, d.x + d.w / 2);
     y0 = Math.min(y0, d.y); y1 = Math.max(y1, d.y + d.h);
   }
-  return { x0, x1, y0, y1 };
+  return { x0: x0 - DECOR, x1: x1 + DECOR, y0: y0 - DECOR, y1: y1 + DECOR };
 }
 // Fit and center the whole visible tree in the window (load, structural change, Fit button, f key). Scale is capped at 1.25.
-function fit(animate) {
+// The header and the side panel are translucent layers over the canvas, so the free
+// area is the window minus whatever they currently cover.
+function chromeInsets() {
+  const head = $('#header').getBoundingClientRect().height;
+  const strip = $('#waiting').hidden ? 0 : $('#waiting').getBoundingClientRect().height;
+  const side = narrow() ? 0 : $('#side').getBoundingClientRect().width;
+  document.documentElement.style.setProperty('--chrome-top', `${Math.round(head + strip)}px`);
+  return { top: head + strip + FIT_PAD, right: side + FIT_PAD, bottom: FIT_PAD, left: FIT_PAD };
+}
+
+function fitFrame() {
   const r = $('#graph').getBoundingClientRect();
-  if (!layoutNodes.length || r.width < 20 || r.height < 20 || state.view !== 'graph') { state.layoutSig = null; return; }
+  const ins = chromeInsets();
+  return {
+    r,
+    ins,
+    w: Math.max(120, r.width - ins.left - ins.right),
+    h: Math.max(120, r.height - ins.top - ins.bottom),
+    cap: r.width >= 1900 ? 1.7 : 1.25,
+  };
+}
+
+function fit(animate) {
+  const f = fitFrame();
+  if (!layoutNodes.length || f.r.width < 20 || f.r.height < 20 || state.view !== 'graph') { state.layoutSig = null; return; }
   const b = bounds();
-  const cap = r.width >= 1900 ? 1.45 : 1.25;
-  const k = Math.max(0.08, Math.min(cap, (r.width - 2 * FIT_PAD) / (b.x1 - b.x0), (r.height - 2 * FIT_PAD) / (b.y1 - b.y0)));
-  const t = d3.zoomIdentity.translate((r.width - (b.x0 + b.x1) * k) / 2, (r.height - (b.y0 + b.y1) * k) / 2).scale(k);
+  const k = Math.max(0.08, Math.min(f.cap, f.w / (b.x1 - b.x0), f.h / (b.y1 - b.y0)));
+  const t = d3.zoomIdentity
+    .translate(f.ins.left + (f.w - (b.x0 + b.x1) * k) / 2, f.ins.top + (f.h - (b.y0 + b.y1) * k) / 2)
+    .scale(k);
   (animate && DUR ? svg.transition().duration(DUR) : svg).call(zoom.transform, t);
   state.userMoved = false;
+}
+
+// Lay the tree out at 1 to 4 stack columns and keep whichever fills the canvas best.
+// An extra column has to buy at least 3 % more scale to be worth the extra width.
+function bestLayout() {
+  const f = fitFrame();
+  let best = { cols: 1, k: -1 };
+  for (const cols of [1, 2, 3, 4]) {
+    layout(cols);
+    const b = bounds();
+    const k = Math.min(f.cap, f.w / (b.x1 - b.x0), f.h / (b.y1 - b.y0));
+    if (k > best.k * 1.03) best = { cols, k };
+  }
+  if (best.cols !== 4) layout(best.cols);
 }
 
 // ---------- outline ----------
@@ -387,7 +478,8 @@ function renderOutline() {
       return r;
     });
   row.attr('data-id', (d) => d.id).style('padding-left', (d) => `${d.depth * 24}px`);
-  row.select('button.chev').text((d) => (d.collapsed ? '▸' : '▾')).attr('disabled', (d) => (d.kids ? null : true))
+  row.classed('open', (d) => Boolean(d.kids) && !d.collapsed);
+  row.select('button.chev').html(icon('chevron')).attr('disabled', (d) => (d.kids ? null : true))
     .attr('aria-expanded', (d) => (d.kids ? String(!d.collapsed) : null));
   row.select('div.card').each(function (d) { syncCard(this, d.n, { collapsed: d.collapsed, status: true }); });
 }
@@ -401,7 +493,6 @@ function renderProjects() {
 }
 function renderHeader() {
   const m = state.map;
-  $('#project-name').textContent = m.name || state.pid;
   $('#project-goal').textContent = m.goal || '';
   $('#project-goal').title = m.goal || '';
   document.title = `${m.name || state.pid} · taskmap`;
@@ -410,14 +501,18 @@ function renderHeader() {
   $('#progress-label').textContent = `${p.done}/${p.total}`;
   const c = statusCounts();
   const unread = unreadCount();
-  $('#counts').innerHTML = STATUSES.map((s) => `<span class="cnt st-${s}${c[s] ? '' : ' zero'}"><i></i>${c[s]} ${LABEL[s]}</span>`).join('')
-    + (unread ? `<span class="cnt unread" title="messages Claude has not read yet"><i></i>${unread} for Claude</span>` : '');
+  const cnt = (cls, n, label, title) => (n ? `<span class="cnt ${cls}" title="${title}"><i></i>${n} ${label}</span>` : '');
+  const ipLeaves = Object.values(state.map.nodes).filter((x) => x.status === 'in_progress' && !hasKids(x.id)).length;
+  $('#counts').innerHTML =
+    cnt('st-in_progress', ipLeaves, 'in progress', 'tasks Claude is working on right now')
+    + cnt('st-blocked', c.blocked, 'waiting on you', 'blocked, waiting for an answer')
+    + cnt('unread', unread, unread === 1 ? 'message unread' : 'messages unread', 'messages Claude has not read yet');
   const now = nowNode();
   const nowEl = $('#now');
   nowEl.hidden = !now;
   if (now) {
     nowEl.dataset.sel = now.id;
-    nowEl.innerHTML = `<span class="k">Now</span><span class="t">${esc(now.title)}</span>${now.started_at ? `<span class="ago">for <span class="mono">${esc(ago(now.started_at))}</span></span>` : ''}`;
+    nowEl.innerHTML = `<span class="k">Now</span><span class="t" title="${esc(now.title)}">${esc(now.title)}</span>${now.started_at ? `<span class="ago">for <span class="mono">${esc(ago(now.started_at))}</span></span>` : ''}`;
   }
   renderWaiting();
   tickUpdated();
@@ -426,6 +521,7 @@ function renderWaiting() {
   const blocked = blockedNodes();
   const strip = $('#waiting');
   strip.hidden = !blocked.length;
+  strip.style.top = `${Math.round($('#header').getBoundingClientRect().height)}px`;
   if (!blocked.length) { $('#waiting-list').innerHTML = ''; return; }
   $('#waiting-list').innerHTML = blocked.map((n) => `<li>
       <a href="#" class="w-title" data-sel="${esc(n.id)}">${esc(n.title)}</a>
@@ -480,19 +576,66 @@ function panelHtml(n) {
       <span class="mono id">${esc(n.id)}</span>
     </div>
     <h2 class="p-title">${esc(n.title)}</h2>
-    ${n.status_reason ? `<div class="p-reason st-${esc(n.status)}"><span class="k">${n.status === 'blocked' ? 'Waiting on you' : 'Skipped because'}</span>${esc(n.status_reason)}</div>` : ''}
+    ${n.status_reason ? `<div class="p-reason st-${esc(n.status)}"><span class="k">${n.status === 'blocked' ? 'Waiting on you' : 'Skipped because'}</span>${esc(n.status === 'blocked' ? question(n.status_reason) : n.status_reason)}</div>` : ''}
     ${kv('What', n.what)}${kv('Why', n.why)}${kv('Done when', n.done_when)}
     <div class="p-sec"><div class="k">Notes${notes ? ` · ${n.notes.length}` : ''}</div>${notes ? `<ul class="timeline">${notes}</ul>` : '<div class="empty">No notes yet.</div>'}</div>
     <div class="p-sec"><div class="k">Feedback${fb ? ` · ${n.feedback.length}` : ''}</div>${fb ? `<ul class="timeline">${fb}</ul>` : '<div class="empty">No feedback yet.</div>'}</div>
     <div class="p-foot">${foot.join('<span class="sep">·</span>')}</div>`;
+}
+const LEGEND = [
+  ['pending', 'Not started yet'],
+  ['in_progress', 'Claude is on this one'],
+  ['done', 'Finished and checked'],
+  ['blocked', 'Waiting on your answer'],
+  ['skipped', 'Dropped, with a reason'],
+];
+function emptyPanelHtml() {
+  if (!state.map) return '<div class="placeholder">Loading the map…</div>';
+  const blocked = blockedNodes();
+  const now = nowNode();
+  const p = progressOf(rootId());
+  let head;
+  if (blocked.length) {
+    const b = blocked[0];
+    head = `<div class="ask">
+      <span class="k">Waiting on you</span>
+      <span class="q">${esc(question(b.status_reason))}</span>
+      <button type="button" class="primary w-reply" data-reply="${esc(b.id)}">${icon('reply')} Answer this</button>
+    </div>`;
+  } else if (now) {
+    head = `<div><h2>Claude is working</h2><p class="lead">On <strong>${esc(now.title)}</strong>${now.started_at ? `, for ${esc(ago(now.started_at))}` : ''}. Pick any bubble to read it or send a message about it.</p></div>`;
+  } else if (p.total && p.done === p.total) {
+    head = `<div><h2>All done</h2><p class="lead">Every task on this map is finished. Pick a bubble to read what was decided.</p></div>`;
+  } else {
+    head = `<div><h2>Nothing in progress</h2><p class="lead">Pick a bubble to read what it is, why it exists and how Claude will know it is done.</p></div>`;
+  }
+  return `<div class="p-empty">
+    ${head}
+    <div>
+      <span class="k">What the rings mean</span>
+      <ul class="legend">
+        ${LEGEND.map(([st, text]) => `<li><span class="swatch st-${st}"><i class="sdot"></i></span>${esc(text)}</li>`).join('')}
+        <li><span class="swatch dashed"><i class="sdot"></i></span>You added it from here</li>
+        <li><span class="swatch unread"><i class="sdot"></i></span>A message Claude has not read</li>
+      </ul>
+    </div>
+    <div>
+      <span class="k">Shortcuts</span>
+      <ul class="keys">
+        <li><kbd>f</kbd>Fit the map to the window</li>
+        <li><kbd>click</kbd>Open a task; the count pill folds its branch</li>
+        <li><kbd>drag</kbd>Pan, scroll to zoom, double-click to fold</li>
+      </ul>
+    </div>
+  </div>`;
 }
 function renderPanel() {
   const n = state.selected ? nodeOf(state.selected) : null;
   const content = $('#panel-content');
   const actions = $('#panel-actions');
   if (!n) {
-    content.innerHTML = '<div class="placeholder"><strong>Pick a bubble</strong> to read what it is, why it exists and how Claude will know it is done.<br><span class="muted">Click a count pill to fold a branch. <span class="mono">f</span> fits the map.</span></div>';
-    content._sig = null;
+    const html = emptyPanelHtml();
+    if (content._sig !== html) { content.innerHTML = html; content._sig = html; }
     actions.hidden = true;
     return;
   }
@@ -567,8 +710,8 @@ function renderActivity() {
     return `<div class="act actor-${esc(e.actor)}" data-sel="${esc(e.node)}">
       <span class="mono ts" title="${esc(e.ts)}">${esc(fmtTime(e.ts))}</span>
       <span class="who">${esc(ACTOR[e.actor] || e.actor)}</span>
-      <span class="what"><span class="verb">${esc(verb)}</span> <span class="ntitle" title="${esc(title)}">${esc(title)}</span></span>
-      <span class="detail">${esc(activityDetail(e))}</span>
+      <span class="what" title="${esc(verb)} ${esc(title)}"><span class="verb">${esc(verb)}</span> <span class="ntitle" title="${esc(title)}">${esc(title)}</span></span>
+      <span class="detail" title="${esc(activityDetail(e))}">${esc(activityDetail(e))}</span>
     </div>`;
   }).join('') || '<div class="placeholder">No activity yet.</div>';
 }
@@ -683,14 +826,38 @@ async function sendFeedback() {
     syncSend();
   }
 }
-async function setStatus(nid, status, reason) {
+let undoTimer = null;
+function showUndo(msg, fn) {
+  const el = $('#undo');
+  if (!el) return;
+  clearTimeout(undoTimer);
+  $('#undo-msg').textContent = msg;
+  el.hidden = false;
+  el._fn = fn;
+  undoTimer = setTimeout(hideUndo, 12000);
+}
+function hideUndo() {
+  const el = $('#undo');
+  if (!el) return;
+  clearTimeout(undoTimer);
+  el.hidden = true;
+  el._fn = null;
+}
+
+async function setStatus(nid, status, reason, { undoable = true } = {}) {
   const btns = document.querySelectorAll('[data-act]');
+  const was = nodeOf(nid);
+  const from = was ? was.status : null;
+  const fromReason = was ? was.status_reason : null;
   for (const b of btns) b.disabled = true;
   try {
     await api('POST', `${projPath()}/nodes/${encodeURIComponent(nid)}/status`, reason ? { status, reason } : { status });
     panelError('');
     closeInline();
     await loadProject();
+    if (undoable && from && from !== status) {
+      showUndo(`Set to ${LABEL[status] || status}.`, () => setStatus(nid, from, fromReason || undefined, { undoable: false }));
+    }
   } catch (e) {
     panelError(e.message);
   } finally {
@@ -894,6 +1061,11 @@ function bindEvents() {
       else if (act === 'reopen') setStatus(state.selected, 'pending');
     });
   }
+  $('#undo-btn').addEventListener('click', () => {
+    const fn = $('#undo')._fn;
+    hideUndo();
+    if (fn) fn();
+  });
   $('#inline-form').addEventListener('submit', submitInline);
   $('#inline-cancel').addEventListener('click', closeInline);
   document.addEventListener('click', (e) => {
@@ -919,7 +1091,21 @@ function bindEvents() {
     if (e.key === 'f' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); fit(true); }
     if ((e.key === 'Enter' || e.key === ' ') && t && t.classList && t.classList.contains('card')) { e.preventDefault(); select(t.dataset.id); }
   });
-  window.addEventListener('resize', () => { if (!state.userMoved) fit(false); });
+  // Both chrome layers float, and both change height as the header wraps or the strip
+  // appears. Measure them directly instead of only when the graph refits.
+  const syncChromeTop = () => {
+    const head = $('#header').getBoundingClientRect().height;
+    const strip = $('#waiting').hidden ? 0 : $('#waiting').getBoundingClientRect().height;
+    document.documentElement.style.setProperty('--chrome-top', `${Math.round(head + strip)}px`);
+    $('#waiting').style.top = `${Math.round(head)}px`;
+  };
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(syncChromeTop);
+    ro.observe($('#header'));
+    ro.observe($('#waiting'));
+  }
+  window.addEventListener('resize', () => { syncChromeTop(); if (!state.userMoved) fit(false); });
+  syncChromeTop();
   setInterval(tickUpdated, 1000);
 }
 

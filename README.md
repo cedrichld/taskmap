@@ -6,7 +6,7 @@ you can watch: a tree of plain-language tasks with live status, open in a browse
 the running session as a notification. The map is also Claude's own memory of the plan,
 so it survives compaction and restarts.
 
-![The taskmap dashboard](docs/demo-1440.png)
+![The taskmap dashboard](docs/dashboard-1440.png)
 
 No dependencies, no account, no network. Node 20 or newer. The server binds
 `127.0.0.1` only, unless you deliberately share it to a phone.
@@ -72,6 +72,8 @@ destroys data, is public, or would change the rest of the plan.
 progress, what is in progress right now, blocked and unread counts, and a green dot
 for every project a Claude Code session is actually running in. Live projects sort
 first. Click a card to open that project's map at `/p/<id>`.
+
+![The overview page](docs/overview-1440.png)
 
 This is the tab to leave open on a second monitor. Claude opens it for you once per
 session and never again — if you close it, it stays closed until you open it or the
