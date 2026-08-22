@@ -299,7 +299,7 @@ function renderHeader() {
   $('#project-goal').title = m.goal || '';
   document.title = `${m.name || state.pid} · taskmap`;
   const p = progressOf(rootId());
-  $('#progress-bar').style.width = `${p.total ? (p.done / p.total) * 100 : 0}%`;
+  $('#progress-bar').style.transform = `scaleX(${p.total ? p.done / p.total : 0})`;
   $('#progress-label').textContent = `${p.done}/${p.total}`;
   const c = statusCounts();
   const unread = unreadCount();
