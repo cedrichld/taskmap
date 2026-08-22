@@ -4,12 +4,24 @@
   "version": "0.1.0",
   "description": "Live task map for long Claude Code runs: Claude keeps its plan as a tree of plain-language nodes, the user watches it at http://localhost:4242 and sends feedback back into the session.",
   "author": {
-    "name": "cedrichld",
-    "email": "cedrich@seas.upenn.edu"
+    "name": "Cedric Hollande",
+    "url": "https://github.com/cedrichld"
   },
-  "skills": ["./"],
+  "skills": [
+    "./"
+  ],
   "hooks": "./hooks/hooks.json",
   "experimental": {
     "monitors": "./monitors/monitors.json"
-  }
+  },
+  "homepage": "https://github.com/cedrichld/taskmap",
+  "license": "MIT",
+  "repository": "https://github.com/cedrichld/taskmap",
+  "keywords": [
+    "planning",
+    "dashboard",
+    "skill",
+    "hooks",
+    "monitor"
+  ]
 }

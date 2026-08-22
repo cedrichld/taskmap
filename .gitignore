@@ -1,1 +1,18 @@
+# Live map state for whatever project this checkout is used on.
 .taskmap/
+
+# Third-party skills vendored for local design work. Not ours to redistribute:
+# run scripts/install-skills.sh to put them back.
+.claude/skills/
+
+# Claude Code scratch space.
+.claude/worktrees/
+.impeccable/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Editors and OS
+.DS_Store
+*.swp

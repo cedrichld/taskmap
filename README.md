@@ -1,67 +1,93 @@
 # taskmap
 
-A live task map for long Claude Code runs. While Claude works, it keeps its plan as a
-tree of plain-language nodes (milestones, chunks, steps) with live status. You open
-**http://localhost:4242**, see the whole plan, leave feedback on any node, and add
-tasks from the browser; those reach the running session as notifications. The map is
-also Claude's own durable plan: it survives compaction and restarts.
+Claude Code is good at long runs and bad at showing you one. `taskmap` gives it a plan
+you can watch: a tree of plain-language tasks with live status, open in a browser at
+**http://localhost:4242**, that you can comment on while it works. Your comment reaches
+the running session as a notification. The map is also Claude's own memory of the plan,
+so it survives compaction and restarts.
 
-![dashboard](docs/demo-1440.png)
+![The taskmap dashboard](docs/demo-1440.png)
 
-The design language (bubbles, rings, layout, motion, tokens) is in
-[docs/design/DESIGN.md](docs/design/DESIGN.md).
+No dependencies, no account, no network. Node 20 or newer. The server binds
+`127.0.0.1` only, unless you deliberately share it to a phone.
 
-Zero runtime dependencies. Node >= 20. Single user, local only (the server binds
-`127.0.0.1`, never `0.0.0.0`).
+## Install
 
-## How it is installed
+```bash
+git clone https://github.com/cedrichld/taskmap ~/.claude/skills/taskmap
+ln -s ~/.claude/skills/taskmap/bin/taskmap ~/.local/bin/taskmap   # for your own shell
+```
 
-This folder, `~/.claude/skills/taskmap/`, is a Claude Code
+Restart Claude Code, then:
+
+```bash
+taskmap demo
+```
+
+That opens a finished sample project so you can see what the dashboard does before
+trusting it with real work. The second line above is only for your own terminal —
+Claude Code puts a plugin's `bin/` on the Bash tool's `PATH` by itself.
+
+Two optional lines make it smoother. In `~/.claude/settings.json`, so Claude never has
+to ask before touching the map:
+
+```json
+{ "permissions": { "allow": ["Bash(taskmap *)"] } }
+```
+
+And in `~/.claude/CLAUDE.md`, so it reaches for the map without being told:
+
+```markdown
+For any task that will take more than a few minutes or touch more than a couple of
+files, invoke /taskmap before writing code and keep the map current while you work.
+```
+
+`~/.claude/skills/taskmap/` is a
 [skills-directory plugin](https://code.claude.com/docs/en/plugins-reference#skills-directory-plugins):
-Claude Code loads it as `taskmap@skills-dir` in every project, with no install step.
-It provides:
+Claude Code discovers it in place as `taskmap@skills-dir` on the next start, in every
+project, with no install step. Confirm with `claude plugin list`; `/taskmap` should
+appear in the `/` menu and `taskmap-inbox` in `/tasks`.
 
-| Piece | What it does |
-| --- | --- |
-| `SKILL.md` | The skill. `/taskmap` (also `/taskmap:taskmap`). Claude invokes it on its own for multi-step work. |
-| `bin/taskmap` | The CLI. On Claude's Bash `PATH` while the plugin is enabled; symlinked to `~/.local/bin/taskmap` for your shell. |
-| `hooks/hooks.json` | `SessionStart`: starts the server if needed and prints a one-line map summary into Claude's context; after a compaction (`source: compact`) it prints the whole `tree --open` instead, so the plan survives. `Stop`: blocks the end of a turn once while a leaf is still in progress (respects `stop_hook_active`). `UserPromptSubmit`: an optional one-line reminder for prompts over 400 characters when nothing is in progress — off by default, `taskmap config prompt-reminder on` enables it. |
-| `monitors/monitors.json` | `taskmap-inbox`: a background `taskmap watch` that turns dashboard feedback into `[taskmap] …` notifications inside the session. |
+## How it behaves
 
-Outside the repo, the build also added `"Bash(taskmap *)"` to `permissions.allow` in
-`~/.claude/settings.json` and a short `## taskmap` block to `~/.claude/CLAUDE.md`.
+You do not drive it. For any task that takes more than a few minutes Claude runs
+`taskmap status`, creates a map if there is none, writes the plan in one batch, and
+keeps statuses current as it goes. It prints the dashboard URL once. Type `/taskmap`
+to invoke it by hand.
 
-**After a restart, confirm it loaded:** `claude plugin list` shows `taskmap@skills-dir`
-under "Skills-directory plugins", `/taskmap` appears in the `/` menu, and the task
-panel (`/tasks`) lists the `taskmap-inbox` monitor. Edits to `SKILL.md` are picked up
-live; edits to `hooks/` or `monitors/` need `/reload-plugins` or a restart.
+The plan is written for a reader who does not know the stack. Every node carries a
+title, what it produces, why it matters, and one observable check that says it is
+done — "the maze from the sketch is visible and the player cannot cross a wall",
+not "tests pass".
 
-## Using it from a Claude session
+Three levels below the root: milestones, chunks, steps. One leaf in progress at a
+time. Work Claude discovers becomes a node before it is done, dead ends become
+skipped nodes with a reason, and assumptions are written on the node rather than
+turned into a question. Claude blocks and asks only when the decision costs money,
+destroys data, is public, or would change the rest of the plan.
 
-Nothing to do: for any task that takes more than a few minutes Claude runs
-`taskmap status`, creates the map if needed, plans with one `add --batch`, and keeps
-statuses current. Type `/taskmap` to invoke it explicitly. Open the URL it prints
-(or run `taskmap open`) and watch.
+## Talking back
 
-From the dashboard you can:
+The dashboard is not read-only. On any node you can:
 
-- **Send feedback** on any node (Ctrl/Cmd+Enter). Claude sees
-  `[taskmap] feedback on n12 "…": …` immediately and reads it with `taskmap inbox`.
-- **Add a high-level task** (header button) or **Add subtask** (side panel). They get
-  a dashed outer ring (`*` in the CLI tree); Claude decomposes them when it reaches them.
-- **Answer a blocked question**: the **Waiting on you** strip under the header lists
-  every blocked node with its question; **Reply** opens the message box on that node.
-- **Override a status**: Mark done, Mark blocked, Reopen. Logged as actor `ui`.
-- Switch between **Graph** (pan, zoom, `f` to fit, click a count pill or double-click
-  to fold a branch) and **Outline**, and read the **activity feed**. The **Now** chip
-  names the leaf Claude is working on.
+- **Send a message** (Ctrl/Cmd+Enter in the panel). The running session gets
+  `[taskmap] feedback on n12 "…": …` within a second, as a notification — no need to
+  interrupt what Claude is typing. It reads the full text with `taskmap inbox`,
+  acknowledges on the node, and adjusts.
+- **Add a task**, at the top level or under any node. It shows up with a dashed ring;
+  Claude fills in the detail when it reaches it.
+- **Answer a blocked question.** Blocked nodes are listed in a **Waiting on you** strip
+  under the header. **Reply** puts the cursor in the right box.
+- **Override a status**: mark done, mark blocked, reopen.
 
-Unread feedback stays highlighted until Claude runs `taskmap inbox`.
+Unread messages stay highlighted until Claude has actually read them.
 
-## Using the CLI yourself
+The graph pans and zooms (`f` fits it to the window); **Outline** is the same tree as a
+list; the activity feed on the right shows every change with who made it.
 
-The `taskmap status`, `taskmap check` and session-start lines include a `blocked: n`
-count; `taskmap check` also prints one `waiting:` line per blocked node.
+## The CLI
+
+Claude uses this; you can too.
 
 ```
 taskmap init "<name>" --goal "<one sentence>" [--track]
@@ -74,69 +100,60 @@ taskmap tree [--open|--all] [--depth N]     # --open collapses finished subtrees
 taskmap show <id> | next | inbox [--peek] | status | check [--json]
 taskmap serve [--ensure|--stop|--restart|--foreground] [--port N]
 taskmap open | watch | demo | forget <project id>
-taskmap export --obsidian <dir>             # one note per node, [[wikilinks]] to parent/children/dependencies
-taskmap config prompt-reminder on|off       # the UserPromptSubmit nudge; stored in ~/.taskmap/config.json
+taskmap export --obsidian <dir>             # one note per node, [[wikilinks]] between them
+taskmap config prompt-reminder on|off
 ```
 
-`taskmap forget <id>` drops a project from the dashboard switcher (its files are untouched).
-
-`taskmap demo` builds the sample "Portfolio website" project at `~/.taskmap/demo/` and
-prints its URL; run it again to reset the demo. `taskmap help` prints the full list.
-`--project <id>` (or `TASKMAP_PROJECT=<id>`) targets a registered project from anywhere.
-
 Tree glyphs: `[ ]` pending, `[~]` in progress, `[x]` done, `[!]` blocked, `[-]` skipped,
-`*` user-added, `(2 unread)` unread feedback. Progress counts leaves only:
-done leaves / (leaves minus skipped leaves).
+`*` user-added, `(2 unread)` unread feedback. Progress counts leaves only, and skipped
+leaves are excluded from the total.
+
+`taskmap forget <id>` drops a project from the dashboard switcher without touching its
+files. `--project <id>` (or `TASKMAP_PROJECT=<id>`) targets a registered project from
+anywhere. `taskmap help` prints the rest.
 
 ## Where state lives
 
 | Path | Contents |
 | --- | --- |
-| `<project>/.taskmap/map.json` | The map. Every write is atomic (temp file + rename) and serialized through `map.lock`. |
-| `<project>/.taskmap/log.jsonl` | Every mutation, one JSON line each. |
-| `<project>/.taskmap/inbox.jsonl` | The user-originated subset (feedback, added nodes, status overrides). |
+| `<project>/.taskmap/map.json` | The map. Every write is atomic and serialized through a lock file. |
+| `<project>/.taskmap/log.jsonl` | Every change, one JSON line each. |
+| `<project>/.taskmap/inbox.jsonl` | The subset you originated. |
 | `~/.taskmap/registry.json` | Every project the dashboard knows about. |
-| `~/.taskmap/server.pid`, `server.log` | The detached server. |
-| `~/.taskmap/config.json` | `{ "prompt_reminder": true }` when the long-prompt reminder is on. |
+| `~/.taskmap/server.pid`, `server.log` | The one shared server. |
+| `~/.taskmap/config.json` | Small preferences. |
 | `~/.taskmap/demo/` | The demo project. |
 
 `taskmap init` adds `.taskmap/` to the project's `.gitignore` unless you pass `--track`.
-Subagents running in git worktrees find the main worktree's map automatically.
+Nothing leaves your machine.
 
-The server is one process for all projects, started on demand by `init`, the
-SessionStart hook, `serve --ensure`, `open` or `demo`; it keeps running after the
-session ends. `TASKMAP_PORT` changes the port everywhere (CLI, hook, URL).
-`taskmap serve --stop` stops it; `--restart` after editing `src/` or `ui/`.
-
-Data model and API: [docs/SPEC.md](docs/SPEC.md).
-
-## Tests
-
-```
-bash tests/smoke.sh        # temp project, isolated TASKMAP_HOME, its own port (4747)
-claude plugin validate .   # manifest and hook schema
-node tests/gen40.js <dir>  # registers a 40-node "Photo journal" map for layout checks
-node tests/shots.js <projectId> 1440x900 out.png [select=n10] [view=outline]   # headless Chrome render + console check
-```
-
-## Troubleshooting
-
-- **Port in use**: `TASKMAP_PORT=4343 taskmap serve --ensure` (and export it for
-  Claude Code too, or the hook will try 4242). `~/.taskmap/server.log` has the reason.
-- **Hook or monitor not firing**: they run `bin/taskmap` with `#!/usr/bin/env node`, so
-  `node` must be on the PATH Claude Code was started with. Check `claude --debug`.
-- **Dashboard says disconnected**: the server stopped; any `taskmap` command that needs
-  it (`status` does not) restarts it, or run `taskmap serve --ensure`.
-- **Stale lock** (`map.lock is held by another process`): a writer crashed; locks older
-  than 5 s are removed automatically, otherwise delete `.taskmap/map.lock`.
+One server serves every project. It starts on demand and outlives the session;
+`taskmap serve --stop` ends it, `--restart` reloads it after editing `src/` or `ui/`,
+and `TASKMAP_PORT` moves it off 4242 (export it for Claude Code too, or its hook will
+still look at 4242).
 
 ## Uninstall
 
-```
+```bash
 taskmap serve --stop
 rm -rf ~/.claude/skills/taskmap ~/.taskmap ~/.local/bin/taskmap
 ```
 
-Then remove `"Bash(taskmap *)"` from `permissions.allow` in `~/.claude/settings.json`,
-the `## taskmap` block from `~/.claude/CLAUDE.md`, and any `<project>/.taskmap/`
-directories you no longer want (they are gitignored, so `git status` will not show them).
+Then drop `"Bash(taskmap *)"` from `~/.claude/settings.json`, the taskmap paragraph
+from `~/.claude/CLAUDE.md`, and any `<project>/.taskmap/` directories you no longer
+want. They are gitignored, so `git status` will not remind you.
+
+## Development
+
+```bash
+bash tests/smoke.sh          # temp project, isolated home, its own port
+claude plugin validate .     # manifest and hook schema
+node tests/gen40.js <dir>    # a 40-node map for layout checks
+node tests/shots.js <projectId> 1440x900 out.png [select=n10] [view=outline]
+scripts/install-skills.sh <checkout>   # third-party design skills, not tracked here
+```
+
+- Data model, CLI output and HTTP API: [docs/SPEC.md](docs/SPEC.md)
+- Visual language: [docs/design/DESIGN.md](docs/design/DESIGN.md)
+
+MIT licensed. Issues and pull requests welcome.
