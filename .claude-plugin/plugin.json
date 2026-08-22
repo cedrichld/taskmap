@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "taskmap",
+  "version": "0.1.0",
+  "description": "Live task map for long Claude Code runs: Claude keeps its plan as a tree of plain-language nodes, the user watches it at http://localhost:4242 and sends feedback back into the session.",
+  "author": {
+    "name": "cedrichld",
+    "email": "cedrich@seas.upenn.edu"
+  },
+  "skills": ["./"],
+  "hooks": "./hooks/hooks.json",
+  "experimental": {
+    "monitors": "./monitors/monitors.json"
+  }
+}

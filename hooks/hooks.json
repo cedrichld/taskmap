@@ -1,0 +1,16 @@
+{
+  "description": "taskmap: print a one-line map summary when a session starts (plain stdout reaches Claude's context on SessionStart)",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/taskmap hook session-start",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

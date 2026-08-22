@@ -1,0 +1,8 @@
+[
+  {
+    "name": "taskmap-inbox",
+    "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/taskmap watch",
+    "description": "User feedback and added tasks from the taskmap dashboard",
+    "when": "always"
+  }
+]

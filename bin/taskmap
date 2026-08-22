@@ -1,0 +1,8 @@
+#!/usr/bin/env node
+'use strict';
+// taskmap CLI entry. Resolves src/ relative to this file's real path so the
+// symlink in ~/.local/bin works too.
+const fs = require('fs');
+const path = require('path');
+const real = fs.realpathSync(__filename);
+require(path.join(path.dirname(real), '..', 'src', 'cli.js')).main(process.argv.slice(2));
