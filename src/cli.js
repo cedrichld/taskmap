@@ -61,8 +61,9 @@ function usage() {
     '  note <id> "<text>"',
     '  tree [--open|--all] [--depth N] | show <id> | next | inbox [--peek] | status | check [--json]',
     '  serve [--ensure|--stop|--restart|--foreground] [--port N] | open | watch | demo | forget <project id>',
-    '  export --obsidian <dir>',
-    '  hook session-start|stop|prompt',
+    '  export --obsidian <dir>       one markdown note per node with [[wikilinks]]',
+    '  config [prompt-reminder on|off]',
+    '  hook session-start|stop|prompt   (used by hooks/hooks.json)',
     'global: --project <id> (or TASKMAP_PROJECT), TASKMAP_PORT, TASKMAP_HOME',
   ].join('\n');
 }
@@ -486,29 +487,171 @@ function readHookInput() {
   }
 }
 
+// ---------- hooks (stdin: the hook's JSON; stdout: what Claude sees) ----------
+
+function readConfig() {
+  try {
+    const c = store.readJson(path.join(store.home(), 'config.json'), {});
+    return c && typeof c === 'object' ? c : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function writeConfig(cfg) {
+  fs.mkdirSync(store.home(), { recursive: true });
+  store.writeJsonAtomic(path.join(store.home(), 'config.json'), cfg);
+}
+
+function resolveQuiet(cwd, flags) {
+  try {
+    return store.resolveProjectDir({ cwd, id: flags.project || process.env.TASKMAP_PROJECT });
+  } catch (e) {
+    return null;
+  }
+}
+
+// SessionStart: plain stdout reaches Claude's context. Fires with source "compact"
+// after compaction, which is where the plan gets re-injected (PostCompact output does not reach Claude).
+async function hookSessionStart(input, cwd, flags) {
+  try {
+    await ensureServer({ quiet: true, waitMs: 1500 });
+  } catch (e) {
+    // the dashboard is optional; never fail the session
+  }
+  const dir = resolveQuiet(cwd, flags);
+  if (!dir) return;
+  const map = store.readMap(dir);
+  const p = store.progress(map);
+  const ip = store.inProgressNodes(map);
+  const unread = store.unreadCount(map);
+  if (input.source === 'compact') {
+    let lines = renderTree(map, { open: true });
+    for (const depth of [3, 2, 1]) {
+      if (lines.join('\n').length <= 9000) break; // hook output is capped at 10,000 characters
+      lines = renderTree(map, { open: true, depth });
+    }
+    out(`[taskmap] Context was compacted. The map for "${map.name}" is the plan (taskmap tree --open):`);
+    for (const l of lines) out(l);
+    if (ip.length) out(`[taskmap] In progress: ${ip.map((n) => `${n.id} ${n.title}`).join('; ')}.`);
+    if (unread) out(`[taskmap] ${unread} unread user event(s); taskmap inbox lists them.`);
+    out('[taskmap] The next actionable node comes from taskmap next.');
+    return;
+  }
+  out(`[taskmap] Map found: ${map.name}, ${p.done}/${p.total} done, ${ip.length} in progress, ${unread} unread. Run /taskmap to resume.`);
+}
+
+// Stop: block once while a leaf is still in progress; stop_hook_active is the loop guard.
+function hookStop(input, cwd, flags) {
+  if (input.stop_hook_active) return;
+  const dir = resolveQuiet(cwd, flags);
+  if (!dir) return;
+  const map = store.readMap(dir);
+  const leaves = store.inProgressNodes(map).filter((n) => store.isLeaf(map, n.id));
+  if (!leaves.length) return;
+  const list = leaves.map((n) => `${n.id} "${n.title}"`).join(', ');
+  out(JSON.stringify({
+    decision: 'block',
+    reason: `taskmap: ${list} is still in_progress on the map. Close it out before ending the turn: taskmap done <id> --note "<decision; where the code lives>" if it is finished, taskmap block <id> --reason "waiting on user: <question>" if it waits on the user, or taskmap reopen <id> plus taskmap note <id> "<where you stopped>". Then taskmap note n0 "State: ... Next: ...".`,
+  }));
+}
+
+// UserPromptSubmit: off unless ~/.taskmap/config.json has prompt_reminder: true.
+function hookPrompt(input, cwd, flags) {
+  if (!readConfig().prompt_reminder) return;
+  const prompt = String(input.prompt || '');
+  if (prompt.length <= 400 || /^\s*\//.test(prompt)) return;
+  const dir = resolveQuiet(cwd, flags);
+  if (dir) {
+    const map = store.readMap(dir);
+    if (store.inProgressNodes(map).some((n) => store.isLeaf(map, n.id))) return;
+  }
+  out(`[taskmap] Long prompt (${prompt.length} chars) and no node in progress${dir ? ' on the map' : ' (no map here yet)'}. If this is multi-step work, the /taskmap skill applies: plan on the map before writing code.`);
+}
+
 async function cmdHook({ pos, flags }) {
   const which = pos[1];
   const input = readHookInput();
   const cwd = input.cwd && fs.existsSync(input.cwd) ? input.cwd : process.cwd();
-  if (which === 'session-start') {
-    try {
-      await ensureServer({ quiet: true, waitMs: 1500 });
-    } catch (e) {
-      // the dashboard is optional; never fail the session
-    }
-    let dir = null;
-    try {
-      dir = store.resolveProjectDir({ cwd, id: flags.project || process.env.TASKMAP_PROJECT });
-    } catch (e) {
-      dir = null;
-    }
-    if (!dir) return;
-    const map = store.readMap(dir);
-    const p = store.progress(map);
-    out(`[taskmap] Map found: ${map.name}, ${p.done}/${p.total} done, ${store.inProgressNodes(map).length} in progress, ${store.unreadCount(map)} unread. Run /taskmap to resume.`);
+  try {
+    if (which === 'session-start') return await hookSessionStart(input, cwd, flags);
+    if (which === 'stop') return hookStop(input, cwd, flags);
+    if (which === 'prompt') return hookPrompt(input, cwd, flags);
+  } catch (e) {
+    return; // a hook must never break the session
+  }
+  throw new UserError(`unknown hook "${which}". Use: hook session-start|stop|prompt`);
+}
+
+function cmdConfig({ pos }) {
+  const key = pos[0];
+  const value = pos[1];
+  const cfg = readConfig();
+  if (!key) {
+    out(JSON.stringify(cfg));
     return;
   }
-  throw new UserError(`unknown hook "${which}". Use: hook session-start`);
+  if (key === 'prompt-reminder') {
+    if (value !== 'on' && value !== 'off') throw new UserError('config prompt-reminder on|off');
+    cfg.prompt_reminder = value === 'on';
+    writeConfig(cfg);
+    out(`prompt-reminder ${value}`);
+    return;
+  }
+  throw new UserError(`unknown config key "${key}". Keys: prompt-reminder`);
+}
+
+// ---------- export ----------
+
+function noteName(n) {
+  const clean = String(n.title).replace(/[\\/:*?"<>|#^[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+  return `${n.id} ${clean}`;
+}
+
+function cmdExport({ flags }) {
+  const dest = flags.obsidian;
+  if (!dest) throw new UserError('export needs --obsidian <dir>.');
+  const { map } = loadMap(flags);
+  fs.mkdirSync(dest, { recursive: true });
+  const link = (id) => (map.nodes[id] ? `[[${noteName(map.nodes[id])}]]` : id);
+  const yaml = (s) => JSON.stringify(String(s === null || s === undefined ? '' : s));
+  let count = 0;
+  for (const n of Object.values(map.nodes)) {
+    const kids = store.children(map, n.id);
+    const dependents = Object.values(map.nodes).filter((o) => (o.links || []).includes(n.id));
+    const lines = [
+      '---',
+      `id: ${n.id}`,
+      `title: ${yaml(n.title)}`,
+      `status: ${n.status}`,
+      `parent: ${n.parent === null ? 'null' : n.parent}`,
+      `source: ${n.source}`,
+      `created: ${n.created}`,
+      `updated: ${n.updated}`,
+      `project: ${yaml(map.name)}`,
+      'tags: [taskmap]',
+      '---',
+      `# ${n.title}`,
+      '',
+      `**Status:** ${n.status}${n.status_reason ? ` — ${n.status_reason}` : ''}  `,
+      n.parent ? `**Parent:** ${link(n.parent)}  ` : `**Goal:** ${map.goal}  `,
+    ];
+    if (kids.length) lines.push(`**Children:** ${kids.map((k) => link(k.id)).join(', ')}  `);
+    if (n.links && n.links.length) lines.push(`**Depends on:** ${n.links.map(link).join(', ')}  `);
+    if (dependents.length) lines.push(`**Needed by:** ${dependents.map((d) => link(d.id)).join(', ')}  `);
+    for (const [label, key] of [['What', 'what'], ['Why', 'why'], ['Done when', 'done_when']]) if (n[key]) lines.push('', `## ${label}`, '', n[key]);
+    if (n.notes && n.notes.length) {
+      lines.push('', '## Notes', '');
+      for (const x of n.notes) lines.push(`- ${x.ts} — ${x.text}`);
+    }
+    if (n.feedback && n.feedback.length) {
+      lines.push('', '## Feedback', '');
+      for (const f of n.feedback) lines.push(`- ${f.ts} — ${f.text}${f.read ? '' : ' (unread)'}`);
+    }
+    fs.writeFileSync(path.join(dest, `${noteName(n)}.md`), lines.join('\n') + '\n');
+    count += 1;
+  }
+  out(`${count} notes -> ${dest}`);
 }
 
 // ---------- dispatch ----------
@@ -567,12 +710,20 @@ async function run(argv) {
     }
     case 'hook':
       return cmdHook({ pos, flags });
+    case 'config':
+      return cmdConfig(args);
+    case 'export':
+      return cmdExport(args);
     default:
       throw new UserError(`unknown command "${cmd}". Run 'taskmap help'.`);
   }
 }
 
 function main(argv) {
+  // `taskmap tree | head` must not crash: a closed pipe just ends the output.
+  process.stdout.on('error', (e) => {
+    if (e && e.code === 'EPIPE') process.exit(0);
+  });
   run(argv).catch((e) => {
     if (e instanceof UserError) {
       process.stderr.write(`error: ${e.message}\n`);

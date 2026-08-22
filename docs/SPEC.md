@@ -276,8 +276,14 @@ unread: 2
 `init` prints `n0  <name>  <url>` (or `status` output when the map already exists).
 `start` `done` `block` `skip` `reopen` `edit` `note` print the node id.
 `serve --ensure` prints `server running at <url>` or `server started at <url>`.
-`demo` prints the demo URL. `open` prints the URL it opened.
-`hook session-start` prints `[taskmap] Map found: <name>, <done>/<total> done, <n> in progress, <k> unread. Run /taskmap to resume.` or nothing.
+`demo` prints the demo URL. `open` prints the URL it opened. `forget <id>` removes a registry entry and prints the id.
+`export --obsidian <dir>` writes `<id> <title>.md` per node (YAML frontmatter, `[[wikilinks]]` to parent, children, dependencies and dependents) and prints `<n> notes -> <dir>`.
+`config prompt-reminder on|off` toggles `prompt_reminder` in `~/.taskmap/config.json`; bare `config` prints the file.
+
+Hooks read the event JSON on stdin and print what Claude should see:
+- `hook session-start`: `[taskmap] Map found: <name>, <done>/<total> done, <n> in progress, <k> unread. Run /taskmap to resume.` or nothing. When `source` is `compact`: a `[taskmap] Context was compacted…` line, the `tree --open` output (depth reduced until it fits in 9,000 characters), the in-progress nodes and the unread count.
+- `hook stop`: nothing when `stop_hook_active` is true or no leaf is in progress; otherwise `{"decision":"block","reason":"taskmap: n5 \"…\" is still in_progress …"}`.
+- `hook prompt`: nothing unless `prompt_reminder` is on, the prompt is over 400 characters, does not start with `/`, and no leaf is in progress; then one `[taskmap] Long prompt …` line.
 
 ### Status transitions
 

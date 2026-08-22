@@ -1,5 +1,5 @@
 {
-  "description": "taskmap: print a one-line map summary when a session starts (plain stdout reaches Claude's context on SessionStart)",
+  "description": "taskmap: a one-line map summary at session start (and the whole tree after compaction, since SessionStart fires with source=compact), a one-time Stop check for nodes left in progress, and an optional long-prompt reminder (off unless `taskmap config prompt-reminder on`).",
   "hooks": {
     "SessionStart": [
       {
@@ -8,6 +8,28 @@
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/taskmap hook session-start",
             "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/taskmap hook stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/taskmap hook prompt",
+            "timeout": 5
           }
         ]
       }

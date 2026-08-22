@@ -22,7 +22,7 @@ It provides:
 | --- | --- |
 | `SKILL.md` | The skill. `/taskmap` (also `/taskmap:taskmap`). Claude invokes it on its own for multi-step work. |
 | `bin/taskmap` | The CLI. On Claude's Bash `PATH` while the plugin is enabled; symlinked to `~/.local/bin/taskmap` for your shell. |
-| `hooks/hooks.json` | `SessionStart`: starts the server if needed and prints a one-line map summary into Claude's context. |
+| `hooks/hooks.json` | `SessionStart`: starts the server if needed and prints a one-line map summary into Claude's context; after a compaction (`source: compact`) it prints the whole `tree --open` instead, so the plan survives. `Stop`: blocks the end of a turn once while a leaf is still in progress (respects `stop_hook_active`). `UserPromptSubmit`: an optional one-line reminder for prompts over 400 characters when nothing is in progress — off by default, `taskmap config prompt-reminder on` enables it. |
 | `monitors/monitors.json` | `taskmap-inbox`: a background `taskmap watch` that turns dashboard feedback into `[taskmap] …` notifications inside the session. |
 
 Outside the repo, the build also added `"Bash(taskmap *)"` to `permissions.allow` in
@@ -64,8 +64,12 @@ taskmap note <id> "<text>"
 taskmap tree [--open|--all] [--depth N]     # --open collapses finished subtrees
 taskmap show <id> | next | inbox [--peek] | status | check [--json]
 taskmap serve [--ensure|--stop|--restart|--foreground] [--port N]
-taskmap open | watch | demo
+taskmap open | watch | demo | forget <project id>
+taskmap export --obsidian <dir>             # one note per node, [[wikilinks]] to parent/children/dependencies
+taskmap config prompt-reminder on|off       # the UserPromptSubmit nudge; stored in ~/.taskmap/config.json
 ```
+
+`taskmap forget <id>` drops a project from the dashboard switcher (its files are untouched).
 
 `taskmap demo` builds the sample "Portfolio website" project at `~/.taskmap/demo/` and
 prints its URL; run it again to reset the demo. `taskmap help` prints the full list.
@@ -84,6 +88,7 @@ done leaves / (leaves minus skipped leaves).
 | `<project>/.taskmap/inbox.jsonl` | The user-originated subset (feedback, added nodes, status overrides). |
 | `~/.taskmap/registry.json` | Every project the dashboard knows about. |
 | `~/.taskmap/server.pid`, `server.log` | The detached server. |
+| `~/.taskmap/config.json` | `{ "prompt_reminder": true }` when the long-prompt reminder is on. |
 | `~/.taskmap/demo/` | The demo project. |
 
 `taskmap init` adds `.taskmap/` to the project's `.gitignore` unless you pass `--track`.

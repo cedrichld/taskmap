@@ -183,6 +183,41 @@ WPID=""
 equals "watch prints exactly one line" "$(wc -l <"$W" | tr -d ' ')" "1"
 equals "watch line format" "$(cat "$W")" '[taskmap] feedback on n4 "Build the maze walls": make them thicker'
 
+# ---- hooks ------------------------------------------------------------
+hook() { # name json
+  printf '%s' "$2" | "$TM" hook "$1" 2>/dev/null
+}
+contains "session-start prints the summary" "$(hook session-start "{\"source\":\"startup\",\"cwd\":\"$PWD\"}")" "[taskmap] Map found: Pac-Man clone, 0/4 done, 0 in progress, 0 unread. Run /taskmap to resume."
+out=$(hook session-start "{\"source\":\"compact\",\"cwd\":\"$PWD\"}")
+contains "compact re-injects the tree" "$out" "[ ] n0  Pac-Man clone  (0/4)"
+contains "compact keeps the indentation" "$out" "      [ ] n5  Draw the wall rectangles"
+contains "compact names the map" "$out" "[taskmap] Context was compacted."
+equals "session-start is silent without a map" "$(cd "$TMP" && hook session-start "{\"source\":\"startup\",\"cwd\":\"$TMP\"}")" ""
+"$TM" start n5 >/dev/null 2>&1
+contains "stop blocks on an open leaf" "$(hook stop "{\"stop_hook_active\":false,\"cwd\":\"$PWD\"}")" '"decision":"block"'
+equals "stop allows the second time" "$(hook stop "{\"stop_hook_active\":true,\"cwd\":\"$PWD\"}")" ""
+"$TM" reopen n5 >/dev/null 2>&1
+equals "stop allows with nothing open" "$(hook stop "{\"stop_hook_active\":false,\"cwd\":\"$PWD\"}")" ""
+long=$(printf 'x%.0s' $(seq 1 450))
+equals "prompt reminder is off by default" "$(hook prompt "{\"prompt\":\"$long\",\"cwd\":\"$PWD\"}")" ""
+"$TM" config prompt-reminder on >/dev/null 2>&1
+contains "prompt reminder fires on a long prompt" "$(hook prompt "{\"prompt\":\"$long\",\"cwd\":\"$PWD\"}")" "[taskmap] Long prompt"
+equals "prompt reminder skips short prompts" "$(hook prompt "{\"prompt\":\"short\",\"cwd\":\"$PWD\"}")" ""
+"$TM" start n5 >/dev/null 2>&1
+equals "prompt reminder skips when a leaf is in progress" "$(hook prompt "{\"prompt\":\"$long\",\"cwd\":\"$PWD\"}")" ""
+"$TM" reopen n5 >/dev/null 2>&1
+"$TM" config prompt-reminder off >/dev/null 2>&1
+
+# ---- export -----------------------------------------------------------
+out=$("$TM" export --obsidian "$TMP/vault" 2>&1)
+equals "export exits 0" "$?" "0"
+contains "export reports the count" "$out" "notes -> $TMP/vault"
+[ -f "$TMP/vault/n4 Build the maze walls.md" ] && ok "export writes a note per node" || bad "export note missing" "$(ls "$TMP/vault")"
+note=$(cat "$TMP/vault/n4 Build the maze walls.md")
+contains "export links the parent" "$note" "**Parent:** [[n1 Build the maze]]"
+contains "export links dependencies" "$note" "**Depends on:** [[n3 Decide the grid format]]"
+contains "export has frontmatter" "$note" "status: pending"
+
 # ---- lock contention --------------------------------------------------
 for i in $(seq 1 20); do "$TM" note n0 "concurrent note $i" >/dev/null 2>&1 & done
 wait
