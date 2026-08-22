@@ -201,6 +201,44 @@ function projectById(id) {
   return readRegistry().projects[id] || null;
 }
 
+// ---------- share token ----------
+// ~/.taskmap/share.json exists only while `taskmap share` is running. While it
+// does, the server demands the token from every request that is not local.
+// Deleting the file invalidates every link that was ever handed out.
+
+function shareFile() {
+  return path.join(home(), 'share.json');
+}
+
+function readShare() {
+  let s = null;
+  try {
+    s = readJson(shareFile(), null);
+  } catch (e) {
+    return null;
+  }
+  return s && typeof s.token === 'string' && s.token ? s : null;
+}
+
+function writeShare(rec) {
+  fs.mkdirSync(home(), { recursive: true });
+  writeJsonAtomic(shareFile(), rec);
+  return rec;
+}
+
+function clearShare() {
+  try {
+    fs.unlinkSync(shareFile());
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function newShareToken() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
 // ---------- session heartbeats ----------
 // One file per running `taskmap watch` (one per Claude Code session):
 // ~/.taskmap/sessions/<pid>.json  { project_id, cwd, pid, started, last_seen, opened }
@@ -1007,6 +1045,11 @@ module.exports = {
   touchRegistry,
   listProjects,
   projectById,
+  shareFile,
+  readShare,
+  writeShare,
+  clearShare,
+  newShareToken,
   sessionsDir,
   sessionFile,
   isLiveSession,

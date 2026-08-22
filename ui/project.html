@@ -29,7 +29,7 @@
       <button type="button" data-view="outline" aria-pressed="false">Outline</button>
     </div>
     <button type="button" id="fit-btn" title="Fit the map to the window (f)">Fit</button>
-    <button type="button" id="add-top-btn" class="primary" aria-expanded="false">Add high-level task</button>
+    <button type="button" id="add-top-btn" class="primary" aria-expanded="false"><span class="wide-only">Add high-level task</span><span class="narrow-only">Add task</span></button>
   </div>
   <form id="add-form" class="add-form" hidden>
     <input id="add-title" placeholder="Title" maxlength="200" autocomplete="off" required>
@@ -47,6 +47,7 @@
 </div>
 
 <div id="body">
+  <div id="sheet-backdrop" class="sheet-backdrop"></div>
   <main id="main" class="view-graph">
     <div id="notice" class="notice" hidden></div>
     <svg id="graph" role="img" aria-label="Task map graph">
@@ -66,6 +67,11 @@
   </main>
 
   <aside id="side">
+    <div class="sheet-bar">
+      <span class="sheet-grip" aria-hidden="true"></span>
+      <button type="button" id="sheet-reply" class="primary">Message Claude</button>
+      <button type="button" id="sheet-close" aria-label="Close the task panel">Close</button>
+    </div>
     <section id="panel">
       <div id="panel-content" class="panel-content">
         <div class="placeholder">Pick a bubble to see its details.</div>

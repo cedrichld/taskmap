@@ -96,6 +96,28 @@ Unread messages stay highlighted until Claude has actually read them.
 The graph pans and zooms (`f` fits it to the window); **Outline** is the same tree as a
 list; the activity feed on the right shows every change with who made it.
 
+## Share to your phone
+
+```bash
+taskmap share          # prints a link and a QR code
+taskmap share --stop   # ends it
+```
+
+`share` opens a [Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)
+— no account, a random `trycloudflare.com` address — and prints the link with a QR
+code drawn in the terminal. Point a phone camera at it. Under 768 px the map opens as
+an outline, tapping a task raises a sheet with the message box one tap away, and the
+overview cards stack. `cloudflared` has to be installed; `share` tells you where to
+get it if it is not.
+
+**The security part, because it matters.** The dashboard can put text into a running
+Claude Code session, so a public address without a lock would hand that to anyone who
+guessed it: `share` mints a 32-byte random token, and while a share is running every
+request that does not come from this machine must carry it — first in the link, then
+in an `HttpOnly` cookie the server sets — and everything else gets a bare 401. The
+token lives in `~/.taskmap/share.json`; `--stop` deletes it, which kills every link
+that was ever handed out. Requests from your own machine are never asked for it.
+
 ## The CLI
 
 Claude uses this; you can too.
@@ -111,6 +133,7 @@ taskmap tree [--open|--all] [--depth N]     # --open collapses finished subtrees
 taskmap show <id> | next | inbox [--peek] | status | check [--json]
 taskmap serve [--ensure|--stop|--restart|--foreground] [--port N]
 taskmap open [--if-needed] | watch | demo | forget <project id>
+taskmap share [--stop|--restart]            # public link + QR through a cloudflared tunnel
 taskmap export --obsidian <dir>             # one note per node, [[wikilinks]] between them
 taskmap config prompt-reminder on|off
 ```
@@ -134,6 +157,7 @@ anywhere. `taskmap help` prints the rest.
 | `~/.taskmap/server.pid`, `server.log` | The one shared server. |
 | `~/.taskmap/config.json` | Small preferences. |
 | `~/.taskmap/sessions/` | One heartbeat file per running session; what the live dot reads. |
+| `~/.taskmap/share.json` | The share token. Exists only while `taskmap share` is running. |
 | `~/.taskmap/demo/` | The demo project. |
 
 `taskmap init` adds `.taskmap/` to the project's `.gitignore` unless you pass `--track`.
@@ -161,6 +185,7 @@ want. They are gitignored, so `git status` will not remind you.
 bash tests/smoke.sh          # temp project, isolated home, its own port
 claude plugin validate .     # manifest and hook schema
 node tests/gen40.js <dir>    # a 40-node map for layout checks
+python3 tests/qr-verify.py   # decodes src/qr.js output with OpenCV (skips if absent)
 node tests/shots.js <projectId|/path> 1440x900 out.png [select=n10] [view=outline] [mobile=1]
 scripts/install-skills.sh <checkout>   # third-party design skills, not tracked here
 ```

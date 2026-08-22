@@ -16,6 +16,7 @@ FAIL=0
 WPID=""
 
 cleanup() {
+  "$TM" share --stop >/dev/null 2>&1 || true
   "$TM" serve --stop >/dev/null 2>&1 || true
   [ -n "$WPID" ] && kill "$WPID" 2>/dev/null
   rm -rf "$TMP"
@@ -254,6 +255,81 @@ node -e '
 const store = require(process.argv[1]);
 store.removeSession(424243);
 ' "$HERE/src/store.js"
+
+# ---- share: token guard, tunnel lifecycle, QR -------------------------
+code=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: elsewhere.example.com" "$URL/api/health")
+equals "no share: any Host is served" "$code" "200"
+
+# A stand-in for cloudflared: the real one would open a public tunnel.
+cat > "$TMP/bin/cloudflared" <<'CF'
+#!/bin/sh
+echo "INF +--------------------------------------------------------+"
+echo "INF |  https://smoke-test-tunnel.trycloudflare.com            |"
+echo "INF Registered tunnel connection"
+while true; do sleep 1; done
+CF
+chmod +x "$TMP/bin/cloudflared"
+
+out=$("$TM" share 2>&1)
+contains "share prints the tunnel link" "$out" "https://smoke-test-tunnel.trycloudflare.com/?t="
+TOKEN=$(printf '%s\n' "$out" | sed -n 's|.*trycloudflare.com/?t=\([A-Za-z0-9_-][A-Za-z0-9_-]*\).*|\1|p' | head -1)
+equals "the token is 32 bytes of base64url" "${#TOKEN}" "43"
+[ -f "$TASKMAP_HOME/share.json" ] && ok "share.json exists while sharing" || bad "share.json missing"
+qrlines=$(printf '%s\n' "$out" | grep -c '[█▀▄]')
+[ "${qrlines:-0}" -ge 15 ] && ok "share draws a QR code ($qrlines rows)" || bad "QR rows: ${qrlines:-0}"
+
+FOREIGN=(-H "Host: smoke-test-tunnel.trycloudflare.com" -H "X-Forwarded-Proto: https")
+code=$(curl -s -o /dev/null -w '%{http_code}' "${FOREIGN[@]}" "$URL/")
+equals "a foreign Host without the token is 401" "$code" "401"
+body=$(curl -s "${FOREIGN[@]}" "$URL/")
+equals "the 401 body is empty" "${#body}" "0"
+code=$(curl -s -o /dev/null -w '%{http_code}' "${FOREIGN[@]}" "$URL/api/projects")
+equals "the API is guarded too" "$code" "401"
+code=$(curl -s -o /dev/null -w '%{http_code}' "${FOREIGN[@]}" "$URL/?t=wrong-token-entirely")
+equals "a wrong token is 401" "$code" "401"
+code=$(curl -s -o /dev/null -w '%{http_code}' "$URL/")
+equals "localhost still needs no token" "$code" "200"
+
+# ?t= on first load -> HttpOnly cookie -> the token leaves the address bar.
+# The round trip runs without X-Forwarded-Proto, because curl will not send a
+# Secure cookie back over plain http; the Secure attribute is asserted separately.
+PLAIN=(-H "Host: smoke-test-tunnel.trycloudflare.com")
+JAR="$TMP/cookies.txt"
+hdr=$(curl -s -o /dev/null -D - -c "$JAR" "${PLAIN[@]}" "$URL/?t=$TOKEN")
+contains "the token redirects" "$hdr" "302"
+contains "the redirect strips the token" "$hdr" "Location: /"
+not_contains "the redirect keeps no t= behind" "$hdr" "Location: /?t="
+contains "the cookie is HttpOnly" "$hdr" "HttpOnly"
+contains "the cookie is SameSite" "$hdr" "SameSite=Lax"
+contains "the cookie is Secure behind https" "$(curl -s -o /dev/null -D - "${FOREIGN[@]}" "$URL/?t=$TOKEN")" "; Secure"
+code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "${PLAIN[@]}" "$URL/")
+equals "the cookie alone is enough afterwards" "$code" "200"
+contains "and it serves the overview" "$(curl -s -b "$JAR" "${PLAIN[@]}" "$URL/")" 'src="/overview.js"'
+code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "${PLAIN[@]}" "$URL/api/projects")
+equals "the cookie reaches the API" "$code" "200"
+
+out=$("$TM" share 2>&1)
+contains "share is idempotent" "$out" "https://smoke-test-tunnel.trycloudflare.com/?t=$TOKEN"
+out=$("$TM" share --stop 2>&1)
+contains "share --stop reports it" "$out" "no longer works"
+[ -f "$TASKMAP_HOME/share.json" ] && bad "share.json survived --stop" || ok "share --stop deletes the token"
+code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "${PLAIN[@]}" "$URL/")
+equals "the old cookie is meaningless once stopped" "$code" "200"
+equals "share --stop twice is harmless" "$("$TM" share --stop)" "no share running"
+rm -f "$TMP/bin/cloudflared"
+out=$("$TM" share 2>&1); rc=$?
+equals "share without cloudflared exits 1" "$rc" "1"
+contains "share says how to install cloudflared" "$out" "cloudflared is not installed"
+
+# the QR encoder, checked against an independent decoder when one is available
+qrout=$(python3 "$HERE/tests/qr-verify.py" 2>&1); qrc=$?
+if printf '%s' "$qrout" | grep -q '^skip'; then
+  ok "qr-verify skipped (no independent decoder here)"
+else
+  equals "every QR version decodes independently" "$qrc" "0"
+  not_contains "no QR failed to decode" "$qrout" "FAIL"
+  contains "qr-verify covered the whole version range" "$qrout" "v10-L"
+fi
 
 # ---- check ------------------------------------------------------------
 out=$("$TM" check 2>&1)

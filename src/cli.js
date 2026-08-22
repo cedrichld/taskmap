@@ -61,6 +61,7 @@ function usage() {
     '  note <id> "<text>"',
     '  tree [--open|--all] [--depth N] | show <id> | next | inbox [--peek] | status | check [--json]',
     '  serve [--ensure|--stop|--restart|--foreground] [--port N] | open [--if-needed] | watch | demo | forget <project id>',
+    '  share [--stop|--restart]      public link + QR through a cloudflared quick tunnel, guarded by a token',
     '  export --obsidian <dir>       one markdown note per node with [[wikilinks]]',
     '  config [prompt-reminder on|off]',
     '  hook session-start|stop|prompt   (used by hooks/hooks.json)',
@@ -533,6 +534,136 @@ async function cmdOpen({ flags }) {
   out(url);
 }
 
+// ---------- share (phone link) ----------
+
+const CF_INSTALL_HINT =
+  'install it first: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/ (macOS: brew install cloudflared, Windows: winget install Cloudflare.cloudflared)';
+
+function haveCloudflared() {
+  const dirs = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  const names = process.platform === 'win32' ? ['cloudflared.exe', 'cloudflared'] : ['cloudflared'];
+  for (const d of dirs) for (const n of names) {
+    try {
+      fs.accessSync(path.join(d, n), fs.constants.X_OK);
+      return path.join(d, n);
+    } catch (e) {
+      // keep looking
+    }
+  }
+  return null;
+}
+
+const sharePidFile = () => path.join(store.home(), 'share.pid');
+const shareLogFile = () => path.join(store.home(), 'share.log');
+
+function shareRunning() {
+  let pid = null;
+  try {
+    pid = parseInt(fs.readFileSync(sharePidFile(), 'utf8'), 10);
+  } catch (e) {
+    return null;
+  }
+  if (!Number.isFinite(pid)) return null;
+  try {
+    process.kill(pid, 0);
+    return pid;
+  } catch (e) {
+    return null;
+  }
+}
+
+// cloudflared prints the assigned hostname into its log within a few seconds.
+async function waitForTunnelUrl(logFile, timeoutMs = 25000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let text = '';
+    try {
+      text = fs.readFileSync(logFile, 'utf8');
+    } catch (e) {
+      text = '';
+    }
+    const m = text.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
+    if (m) return m[0];
+    if (/failed to (request|create) tunnel|error/i.test(text) && Date.now() > deadline - timeoutMs + 8000) break;
+    await sleep(300);
+  }
+  return null;
+}
+
+function printShare(url, token) {
+  const link = `${url}/?t=${token}`;
+  out(link);
+  const qr = require('./qr');
+  out('');
+  out(qr.toText(link, { color: useColor }));
+  out('');
+  out('Point a phone camera at that. The link carries the key; anyone who has it has the dashboard.');
+  out('taskmap share --stop  ends the tunnel and invalidates it.');
+}
+
+async function stopShare() {
+  const pid = shareRunning();
+  if (pid) {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch (e) {
+      // already gone
+    }
+  }
+  try {
+    fs.unlinkSync(sharePidFile());
+  } catch (e) {
+    // already gone
+  }
+  const had = store.clearShare();
+  out(pid || had ? 'share stopped; the link no longer works' : 'no share running');
+}
+
+async function cmdShare({ flags }) {
+  if (flags.stop) return stopShare();
+
+  const existing = store.readShare();
+  const pid = shareRunning();
+  if (existing && existing.url && pid && !flags.restart) {
+    printShare(existing.url, existing.token);
+    return;
+  }
+  if (pid || existing) await stopShare();
+
+  const bin = haveCloudflared();
+  if (!bin) throw new UserError(`cloudflared is not installed, and taskmap share needs it for the tunnel. ${CF_INSTALL_HINT}`);
+
+  await ensureServer({ quiet: true });
+
+  // The token has to exist before the tunnel does, or there is a window where the
+  // dashboard is public and unguarded.
+  const token = store.newShareToken();
+  store.writeShare({ token, created: store.now(), url: null, pid: null });
+
+  fs.mkdirSync(store.home(), { recursive: true });
+  const logFile = shareLogFile();
+  fs.writeFileSync(logFile, '');
+  const logFd = fs.openSync(logFile, 'a');
+  const child = spawn(bin, ['tunnel', '--url', store.baseUrl(), '--no-autoupdate'], {
+    detached: true,
+    stdio: ['ignore', logFd, logFd],
+    cwd: store.home(),
+    env: process.env,
+  });
+  child.on('error', () => {});
+  child.unref();
+  fs.closeSync(logFd);
+  fs.writeFileSync(sharePidFile(), `${child.pid}\n`);
+
+  const url = await waitForTunnelUrl(logFile);
+  if (!url) {
+    await stopShare();
+    throw new UserError(`cloudflared did not report a URL; see ${logFile}.`);
+  }
+  store.writeShare({ token, created: store.now(), url, pid: child.pid });
+  printShare(url, token);
+}
+
 function cmdWatch() {
   require('./watch').watch({ cwd: process.cwd() });
   return new Promise(() => {});
@@ -780,6 +911,8 @@ async function run(argv) {
       return cmdOpen(args);
     case 'watch':
       return cmdWatch(args);
+    case 'share':
+      return cmdShare(args);
     case 'demo':
       return cmdDemo(args);
     case 'forget': {

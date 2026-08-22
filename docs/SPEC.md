@@ -27,6 +27,8 @@ Version 1 (`schema: 1`). This file is the contract between `src/store.js`,
 | `server.log`    | stdout+stderr of the detached server.                       |
 | `config.json`   | Optional. `{ "prompt_reminder": false }` (phase 2 switch).  |
 | `sessions/<pid>.json` | One per running `taskmap watch`; see below.           |
+| `share.json`    | `{ token, created, url, pid }`. Exists only while a share runs. |
+| `share.pid`, `share.log` | The detached `cloudflared` process and its output.  |
 | `demo/`         | The demo project created by `taskmap demo`.                 |
 
 ### Session heartbeats: `~/.taskmap/sessions/<pid>.json`
@@ -44,6 +46,13 @@ that died without cleaning up and is unlinked by the next reader. `project_id` i
 `null` until the session's directory has a map. `opened` is set by
 `taskmap open --if-needed` and is what stops a session opening a second tab; the
 heartbeat preserves it across refreshes.
+
+### The share token: `~/.taskmap/share.json`
+
+Written by `taskmap share` **before** the tunnel starts, so the dashboard is never
+public and unguarded. `token` is 32 random bytes as base64url (43 characters). While
+the file exists, the server applies the share guard (section 6). `share --stop` kills
+the `cloudflared` process and unlinks the file, which invalidates every link.
 
 Project id = `slug(name) + "-" + sha1(absolute path).slice(0, 6)`, e.g.
 `portfolio-website-3f9a1c`. The id is stable for a given name and path and
@@ -295,6 +304,10 @@ unread: 2
 `init` prints `n0  <name>  <url>` (or `status` output when the map already exists).
 `start` `done` `block` `skip` `reopen` `edit` `note` print the node id.
 `serve --ensure` prints `server running at <url>` or `server started at <url>`.
+`share` prints the tunnel URL with `?t=<token>`, a blank line, a QR code of that URL
+and two lines of help; `share --stop` prints `share stopped; the link no longer works`
+or `no share running`. Without `cloudflared` on `PATH` it exits 1 with one line naming
+the install page. Running `share` again while one is up reprints the same link.
 `open --if-needed` prints the URL alone when it opened a browser, or
 `<url>  (already open in a browser)` / `<url>  (already opened this session)` when it
 did not. It opens nothing when a live session heartbeat for the project has `opened`,
@@ -334,7 +347,17 @@ Any transition is allowed from any status; the tool trusts the operator.
 ## 6. HTTP API (`src/server.js`)
 
 Bound to `127.0.0.1:4242` (`TASKMAP_PORT` overrides the port, the host is
-fixed). All responses are JSON except static files. Errors:
+fixed). All responses are JSON except static files.
+
+**Share guard.** When `~/.taskmap/share.json` exists, every request whose `Host`
+header is not `localhost`, `127.0.0.1` or `[::1]` must carry the token, or the answer
+is `401` with an empty body and no other header. The token arrives either as `?t=`,
+which for `GET`/`HEAD` answers `302` to the same path without it and sets
+`taskmap_share=<token>; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800` (plus
+`Secure` when `X-Forwarded-Proto` is `https`), or in that cookie. Comparison is
+`crypto.timingSafeEqual`. The file is re-read only when its mtime or size changes, so
+`share --stop` takes effect on the next request. Requests from this machine are never
+challenged, which also closes the DNS-rebinding hole. Errors:
 `{ "error": "<message>" }` with status 400 (bad input), 404 (unknown
 project or node, or project directory missing), 500 (unexpected).
 
@@ -396,7 +419,11 @@ data: {"type":"ping"}
   "disconnected" state meanwhile; also re-fetch the map on reconnect.
 - Projects with `exists: false` are greyed in the switcher and not selectable.
 - View choice (Graph | Outline) and collapsed node ids are kept in
-  `sessionStorage` per project.
+  `sessionStorage` per project; the default is Graph, or Outline under 768 px.
+- Under 768 px the side panel is a bottom sheet: selecting a node raises it,
+  `Message Claude` focuses the composer, and Close, the backdrop or Escape lowers it.
+  Every control is at least 44 px and inputs are 16 px so iOS does not zoom. The
+  overview grid becomes one column under 640 px.
 - The graph is fit and centered on load and after every structural change
   (nodes added or removed, a fold toggled) unless the user has panned or zoomed;
   Fit / `f` restores auto-fit. Blocked nodes show their reason on the card (two

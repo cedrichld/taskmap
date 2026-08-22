@@ -389,3 +389,85 @@ a.brand:hover { color: var(--text); text-decoration: none; }
 @media (prefers-reduced-motion: reduce) {
   .ov-card.is-live .ov-livedot i { animation: none; }
 }
+
+/* ---------- phone: sheet instead of a column ---------- */
+.sheet-bar { display: none; }
+.sheet-backdrop { display: none; }
+.narrow-only { display: none; }
+
+@media (max-width: 767px) {
+  .wide-only { display: none; }
+  .narrow-only { display: inline; }
+
+  /* Header: back link, project, live dot on one row; progress and view on the next. */
+  #header { padding: 0 10px; }
+  #header .hrow { flex-wrap: wrap; row-gap: 6px; min-height: 0; padding: 6px 0; }
+  .brand, .pname, .pgoal, #updated, #counts { display: none; }
+  .allproj { display: inline-flex; align-items: center; min-height: 44px; }
+  .allproj::before { content: "\2190\00a0"; }
+  #project-select { flex: 1 1 auto; min-width: 0; max-width: none; }
+  #live-text { display: none; }
+  #live { padding: 0 2px; }
+  #header .hrow .spacer { display: none; }
+  .progress { flex: 1 1 60px; width: auto; }
+  .plabel { white-space: nowrap; }
+  .seg { margin-left: auto; }
+  #add-top-btn { flex: 0 0 auto; }
+  #now { flex: 1 1 100%; order: 9; max-width: 100%; }
+  #fit-btn:disabled { display: none; }
+  .add-form { flex-wrap: wrap; }
+  .add-form input { flex: 1 1 100%; }
+
+  /* Thumb-sized controls; 16px keeps iOS from zooming the page on focus. */
+  button, select, input, textarea { min-height: 44px; font-size: 16px; }
+  .composer textarea { min-height: 44px; }
+  .seg { padding: 0; }
+  .seg button { min-height: 44px; padding: 0 16px; font-size: 14px; }
+  #outline .chev { width: 44px; height: 44px; min-height: 44px; }
+  #outline .card { min-height: 52px; }
+  #outline { padding: 12px 12px 40px; }
+
+  #body { grid-template-columns: minmax(0, 1fr); }
+  .sheet-backdrop {
+    display: block; position: fixed; inset: 0; z-index: 8;
+    background: rgba(0, 0, 0, 0.5); opacity: 0; pointer-events: none;
+    transition: opacity 0.22s ease;
+  }
+  body.sheet-open .sheet-backdrop { opacity: 1; pointer-events: auto; }
+
+  #side {
+    position: fixed; z-index: 9; left: 0; right: 0; bottom: 0;
+    height: 82vh; height: 82dvh;
+    border-left: 0; border-top: 1px solid var(--border);
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.5);
+    transform: translateY(100%);
+    transition: transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  body.sheet-open #side { transform: translateY(0); }
+
+  .sheet-bar {
+    display: flex; align-items: center; gap: 8px; flex: none;
+    padding: 10px 12px; border-bottom: 1px solid var(--border); position: relative;
+  }
+  .sheet-grip {
+    position: absolute; top: 5px; left: 50%; transform: translateX(-50%);
+    width: 36px; height: 4px; border-radius: 2px; background: var(--border-strong);
+  }
+  #sheet-reply { flex: 1; }
+  .panel-content { padding: 16px; }
+  .panel-actions { padding: 12px 16px calc(14px + env(safe-area-inset-bottom)); }
+  #activity { flex: 0 0 auto; max-height: 30vh; }
+  .waiting { padding: 8px 12px; }
+
+  body.overview #header .hrow { min-height: 52px; }
+}
+
+@media (max-width: 640px) {
+  .ov-grid { grid-template-columns: 1fr; }
+  #ov-main { padding: 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #side, .sheet-backdrop { transition: none; }
+}

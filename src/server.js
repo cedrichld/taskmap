@@ -2,6 +2,7 @@
 // server.js — one local server for every registered project.
 // Static UI from ui/, JSON API, SSE change feed. Binds 127.0.0.1 only.
 
+const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
@@ -116,6 +117,78 @@ function fullPayload(p) {
   return { project: { id: p.id, name: map.name || p.name, path: p.path, updated: map.updated || p.updated, exists: true, url: store.projectUrl(p.id) }, map, log: store.readLog(p.path, LOG_TAIL) };
 }
 
+// ---------- share guard ----------
+// While ~/.taskmap/share.json exists the dashboard is reachable from outside this
+// machine, and the dashboard can type into a running Claude session. So: local
+// requests pass untouched, everything else must carry the token, and `share --stop`
+// deletes the file, which kills every link that was ever handed out.
+
+const SHARE_COOKIE = 'taskmap_share';
+let shareCache = { key: null, rec: null };
+
+function currentShare() {
+  const file = store.shareFile();
+  let st = null;
+  try {
+    st = fs.statSync(file);
+  } catch (e) {
+    shareCache = { key: null, rec: null };
+    return null;
+  }
+  const key = `${st.mtimeMs}:${st.size}`;
+  if (shareCache.key !== key) shareCache = { key, rec: store.readShare() };
+  return shareCache.rec;
+}
+
+function isLocalRequest(req) {
+  const raw = String(req.headers.host || '');
+  const name = raw.startsWith('[') ? raw.slice(0, raw.indexOf(']') + 1) : raw.split(':')[0];
+  return name === 'localhost' || name === '127.0.0.1' || name === '[::1]' || name === '::1' || name === '';
+}
+
+function cookieValue(req, name) {
+  for (const part of String(req.headers.cookie || '').split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return null;
+}
+
+function tokenMatches(given, expected) {
+  if (typeof given !== 'string' || !given) return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// Returns true when the request may proceed. Otherwise it has been answered.
+function passesShareGuard(req, res, url) {
+  const share = currentShare();
+  if (!share || isLocalRequest(req)) return true;
+
+  if (tokenMatches(cookieValue(req, SHARE_COOKIE), share.token)) return true;
+
+  if (tokenMatches(url.searchParams.get('t'), share.token)) {
+    const secure = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+    const cookie = `${SHARE_COOKIE}=${encodeURIComponent(share.token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${secure ? '; Secure' : ''}`;
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      // Move the token out of the address bar (and out of any Referer) at once.
+      url.searchParams.delete('t');
+      const to = url.pathname + (url.searchParams.toString() ? `?${url.searchParams}` : '');
+      res.writeHead(302, { 'Set-Cookie': cookie, Location: to, 'Cache-Control': 'no-store' });
+      res.end();
+      return false;
+    }
+    res.setHeader('Set-Cookie', cookie);
+    return true;
+  }
+
+  res.writeHead(401, { 'Content-Length': 0, 'Cache-Control': 'no-store' });
+  res.end();
+  return false;
+}
+
 function start({ port = store.port(), host = '127.0.0.1' } = {}) {
   const clients = new Map(); // project id -> Set<res>
   const seen = new Map(); // project id -> { mtimeMs, size }
@@ -201,6 +274,7 @@ function start({ port = store.port(), host = '127.0.0.1' } = {}) {
 
   async function handle(req, res) {
     const u = new URL(req.url, `http://${host}`);
+    if (!passesShareGuard(req, res, u)) return undefined;
     const p = u.pathname;
     const method = req.method;
 

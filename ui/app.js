@@ -9,6 +9,8 @@ const ACTOR = { cli: 'Claude', ui: 'You' };
 const VERB = { init: 'created', add: 'added', start: 'started', done: 'finished', block: 'blocked', skip: 'skipped', reopen: 'reopened', edit: 'edited', note: 'noted on', feedback: 'commented on', status: 'set', read: 'read' };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const REDUCED = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const NARROW_Q = window.matchMedia && window.matchMedia('(max-width: 767px)');
+const narrow = () => Boolean(NARROW_Q && NARROW_Q.matches);
 const DUR = REDUCED ? 0 : 320;
 
 function esc(s) {
@@ -625,6 +627,7 @@ function select(id) {
   panelError('');
   applySelection();
   renderPanel();
+  if (narrow()) setSheet(Boolean(state.selected));
   applyXlinks();
 }
 function toggleCollapse(id) {
@@ -633,6 +636,18 @@ function toggleCollapse(id) {
   ss.set(`taskmap:collapsed:${state.pid}`, [...state.collapsed]);
   renderMain();
 }
+// On a phone the side panel is a sheet over the map rather than a column beside it.
+function setSheet(open) {
+  document.body.classList.toggle('sheet-open', Boolean(open));
+  if (open) $('#side').scrollTop = 0;
+}
+function replyToSelected() {
+  if (!state.selected) return;
+  if (narrow()) setSheet(true);
+  $('#panel').scrollTop = $('#panel').scrollHeight;
+  $('#fb-text').focus();
+}
+
 function setView(v) {
   if (v !== 'graph' && v !== 'outline') return;
   state.view = v;
@@ -796,7 +811,7 @@ function switchProject(id) {
   const storedCollapsed = ss.get(`taskmap:collapsed:${id}`, null);
   state.autoCollapse = storedCollapsed === null;
   state.collapsed = new Set(storedCollapsed || []);
-  state.view = ss.get(`taskmap:view:${id}`, 'graph');
+  state.view = ss.get(`taskmap:view:${id}`, narrow() ? 'outline' : 'graph');
   $('#fb-text').value = '';
   closeInline();
   panelError('');
@@ -823,6 +838,11 @@ function bindEvents() {
   $('#add-top-btn').addEventListener('click', () => toggleAddForm($('#add-form').hidden));
   $('#add-cancel').addEventListener('click', () => toggleAddForm(false));
   $('#add-form').addEventListener('submit', submitAddTop);
+  $('#sheet-close').addEventListener('click', () => setSheet(false));
+  $('#sheet-backdrop').addEventListener('click', () => setSheet(false));
+  $('#sheet-reply').addEventListener('click', replyToSelected);
+  if (NARROW_Q && NARROW_Q.addEventListener) NARROW_Q.addEventListener('change', () => { setSheet(false); if (!state.userMoved) fit(false); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.body.classList.contains('sheet-open')) setSheet(false); });
   $('#activity-toggle').addEventListener('click', () => {
     const collapsed = $('#side').classList.toggle('act-collapsed');
     $('#activity-toggle').setAttribute('aria-expanded', String(!collapsed));
