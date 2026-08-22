@@ -81,10 +81,31 @@ you begin its first leaf; `done` it only after verifying its own `done_when`.
 - Work you discover becomes a node before you do it:
   `taskmap add "<title>" --parent <id> --what ".." --why ".." --done-when ".."`.
 - A dead end becomes `taskmap skip <id> --reason "<why>"`.
-- Waiting on the user becomes `taskmap block <id> --reason "waiting on user: <question>"`,
-  then ask the question in chat.
 - A change of shape is `taskmap edit <id> --parent|--title|--what|--why|--done-when|--link|--unlink ..`.
 - Never silently change scope. If the map says X and you are doing Y, fix the map first.
+
+**Ambiguity: decide and record.** When something is unclear, pick the most reasonable
+option, write it on the node, and keep going:
+`taskmap note <id> "assumed <X> because <Y>; say so if wrong"`. The user reads notes on
+the dashboard and pushes back through feedback whenever they disagree. Do not stop to ask.
+
+**Blocking is the exception.** `taskmap block <id> --reason "waiting on user: <question>"`
+is allowed only when all three hold:
+
+1. The decision is costly or hard to reverse: paid services, deleting data, public
+   deploys, account or credential actions, or a product choice that changes most of the
+   remaining plan.
+2. No reasonable default exists.
+3. The node cannot be deferred to the end of the run.
+
+| Block                                                          | Decide and note                                                  |
+| -------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Publish the site to the paid hosting tier or the free one?     | Ghost speed? "assumed 4 tiles/s because classic feel; say so if wrong" |
+| Drop the old orders table now that the migration ran?          | Dark or light theme? "assumed dark because the mockup was dark"  |
+
+A blocked node never stops the run. Block it, ask the question in chat in one line, run
+`taskmap next`, and keep working for as long as anything is actionable. Do not wait for
+the answer.
 
 ## 6. User feedback
 
@@ -95,9 +116,13 @@ half as tall` can arrive at any moment, and `taskmap inbox` lists everything unr
 2. Adjust the plan: `reopen`, `edit`, `add`, or `skip` as needed.
 3. Tell the user in one line, then keep going.
 
+Feedback on a blocked node is the answer to its question: `taskmap reopen <id>`,
+`taskmap note <id> "User answered: <gist>"`, then `start` it and finish it before
+anything else.
+
 User-added nodes (`*` in the tree) arrive with empty `what` and `done_when`. Decompose
-them when you reach them. If the intent is unclear, `block` them with the question
-rather than guess.
+them when you reach them, filling in the most plausible intent and noting the assumption;
+`block` only when the three-part test above holds.
 
 ## 7. Notes
 
@@ -109,8 +134,10 @@ narration.
 
 1. `taskmap check`. No leaf may stay in progress: finish it, `block` it with the reason,
    or `reopen` it with a note on where you stopped.
-2. `taskmap note n0 "State: <where things are>. Next: <the suggested next step>."` so the
-   next session, or you after compaction, can resume from one line.
+2. End the reply with one `Waiting on you: <question>` line per blocked node, or
+   `Waiting on you: nothing`.
+3. `taskmap note n0 "State: <where things are>. Next: <the suggested next step>. Waiting on you: <same list or nothing>."`
+   so the next session, or you after compaction, can resume from one line.
 
 ## 9. Subagents
 

@@ -539,6 +539,12 @@ function inProgressNodes(map) {
     .sort((a, b) => idNum(a.id) - idNum(b.id));
 }
 
+function blockedNodes(map) {
+  return Object.values(map.nodes)
+    .filter((n) => n.status === 'blocked' && n.id !== map.root)
+    .sort((a, b) => idNum(a.id) - idNum(b.id));
+}
+
 function statusCounts(map) {
   const c = { pending: 0, in_progress: 0, done: 0, blocked: 0, skipped: 0 };
   for (const n of Object.values(map.nodes)) if (n.id !== map.root && c[n.status] !== undefined) c[n.status] += 1;
@@ -902,6 +908,7 @@ module.exports = {
   unreadOf,
   unreadCount,
   inProgressNodes,
+  blockedNodes,
   statusCounts,
   wordCount,
   nextActionable,

@@ -68,7 +68,7 @@ contains "batch resolves keys in order" "$out" "s1 -> n5"
 
 # ---- tree / next / show ----------------------------------------------
 out=$("$TM" tree 2>&1)
-contains "tree header" "$out" "Pac-Man clone  0/3 leaves done  0 in progress  0 unread"
+contains "tree header" "$out" "Pac-Man clone  0/3 leaves done  0 in progress  0 blocked  0 unread"
 contains "tree root line" "$out" "[ ] n0  Pac-Man clone  (0/3)"
 contains "tree indents two spaces" "$out" "  [ ] n1  Build the maze  (0/2)"
 contains "tree level 3" "$out" "      [ ] n5  Draw the wall rectangles"
@@ -87,6 +87,10 @@ contains "next honours links" "$("$TM" next)" "n5  Draw the wall rectangles"
 equals "block prints id" "$("$TM" block n5 --reason "waiting on user: wall color?" 2>/dev/null)" "n5"
 contains "tree shows blocked reason" "$("$TM" tree)" "[!] n5  Draw the wall rectangles  blocked: waiting on user: wall color?"
 contains "next skips blocked" "$("$TM" next)" "n2  Make the ghosts chase the player"
+contains "status counts blocked" "$("$TM" status)" "blocked: 1"
+contains "check counts blocked" "$("$TM" check)" "blocked: 1"
+contains "check lists the question" "$("$TM" check)" "waiting: n5  Draw the wall rectangles  waiting on user: wall color?"
+contains "check --json lists blocked" "$("$TM" check --json)" '"blocked":[{"id":"n5"' 
 equals "skip prints id" "$("$TM" skip n2 --reason "ghosts come later" 2>/dev/null)" "n2"
 contains "tree shows skipped" "$("$TM" tree)" "[-] n2  Make the ghosts chase the player  skipped: ghosts come later"
 contains "next reports blocked" "$("$TM" next)" "none  remaining leaves are blocked: n5"
@@ -187,7 +191,7 @@ equals "watch line format" "$(cat "$W")" '[taskmap] feedback on n4 "Build the ma
 hook() { # name json
   printf '%s' "$2" | "$TM" hook "$1" 2>/dev/null
 }
-contains "session-start prints the summary" "$(hook session-start "{\"source\":\"startup\",\"cwd\":\"$PWD\"}")" "[taskmap] Map found: Pac-Man clone, 0/4 done, 0 in progress, 0 unread. Run /taskmap to resume."
+contains "session-start prints the summary" "$(hook session-start "{\"source\":\"startup\",\"cwd\":\"$PWD\"}")" "[taskmap] Map found: Pac-Man clone, 0/4 done, 0 in progress, 0 blocked, 0 unread. Run /taskmap to resume."
 out=$(hook session-start "{\"source\":\"compact\",\"cwd\":\"$PWD\"}")
 contains "compact re-injects the tree" "$out" "[ ] n0  Pac-Man clone  (0/4)"
 contains "compact keeps the indentation" "$out" "      [ ] n5  Draw the wall rectangles"

@@ -126,7 +126,7 @@ function nodeLine(map, n, level, hasKids) {
 
 function headerLine(map) {
   const p = store.progress(map);
-  return `${map.name}  ${p.done}/${p.total} leaves done  ${store.inProgressNodes(map).length} in progress  ${store.unreadCount(map)} unread`;
+  return `${map.name}  ${p.done}/${p.total} leaves done  ${store.inProgressNodes(map).length} in progress  ${store.blockedNodes(map).length} blocked  ${store.unreadCount(map)} unread`;
 }
 
 function renderTree(map, { open = true, depth = Infinity } = {}) {
@@ -192,7 +192,7 @@ function statusLine(map) {
   const p = store.progress(map);
   const ip = store.inProgressNodes(map);
   const ipText = ip.length ? ip.map((n) => `${n.id} ${n.title}`).join('; ') : 'none';
-  return `${map.name}  ${p.done}/${p.total} leaves done  in progress: ${ipText}  ${store.unreadCount(map)} unread  ${store.projectUrl(map.id)}`;
+  return `${map.name}  ${p.done}/${p.total} leaves done  in progress: ${ipText}  blocked: ${store.blockedNodes(map).length}  ${store.unreadCount(map)} unread  ${store.projectUrl(map.id)}`;
 }
 
 // ---------- server control ----------
@@ -413,12 +413,15 @@ function cmdCheck({ flags }) {
   const map = store.readMap(dir);
   const ip = store.inProgressNodes(map).map((n) => ({ id: n.id, title: n.title, leaf: store.isLeaf(map, n.id) }));
   const unread = store.unreadCount(map);
+  const blocked = store.blockedNodes(map).map((n) => ({ id: n.id, title: n.title, reason: n.status_reason }));
   if (flags.json) {
-    out(JSON.stringify({ map: true, id: map.id, name: map.name, in_progress: ip, unread }));
+    out(JSON.stringify({ map: true, id: map.id, name: map.name, in_progress: ip, blocked, unread }));
     return;
   }
   if (!ip.length) out('in_progress: none');
   for (const n of ip) out(`in_progress: ${n.id}  ${n.title}${n.leaf ? '  (leaf)' : ''}`);
+  out(`blocked: ${blocked.length}`);
+  for (const n of blocked) out(`waiting: ${n.id}  ${n.title}  ${n.reason}`);
   out(`unread: ${unread}`);
 }
 
@@ -525,6 +528,7 @@ async function hookSessionStart(input, cwd, flags) {
   const p = store.progress(map);
   const ip = store.inProgressNodes(map);
   const unread = store.unreadCount(map);
+  const blocked = store.blockedNodes(map);
   if (input.source === 'compact') {
     let lines = renderTree(map, { open: true });
     for (const depth of [3, 2, 1]) {
@@ -534,11 +538,12 @@ async function hookSessionStart(input, cwd, flags) {
     out(`[taskmap] Context was compacted. The map for "${map.name}" is the plan (taskmap tree --open):`);
     for (const l of lines) out(l);
     if (ip.length) out(`[taskmap] In progress: ${ip.map((n) => `${n.id} ${n.title}`).join('; ')}.`);
+    if (blocked.length) out(`[taskmap] Blocked, waiting on the user: ${blocked.map((n) => `${n.id} ${n.title}`).join('; ')}. Keep working on what is actionable.`);
     if (unread) out(`[taskmap] ${unread} unread user event(s); taskmap inbox lists them.`);
     out('[taskmap] The next actionable node comes from taskmap next.');
     return;
   }
-  out(`[taskmap] Map found: ${map.name}, ${p.done}/${p.total} done, ${ip.length} in progress, ${unread} unread. Run /taskmap to resume.`);
+  out(`[taskmap] Map found: ${map.name}, ${p.done}/${p.total} done, ${ip.length} in progress, ${blocked.length} blocked, ${unread} unread. Run /taskmap to resume.`);
 }
 
 // Stop: block once while a leaf is still in progress; stop_hook_active is the loop guard.

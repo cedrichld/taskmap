@@ -21,7 +21,10 @@
       "source": "claude",
       "links": [],
       "notes": [
-        { "ts": "2026-08-21T16:40:00.000Z", "text": "State: two of four milestones done; writing project pages. Next: finish the drone mapper page, then the robot arm page." }
+        {
+          "ts": "2026-08-21T16:40:00.000Z",
+          "text": "State: two of four milestones done; writing project pages. Next: finish the drone mapper page, then the robot arm page. Waiting on you: buy cedrichollande.com or stay on github.io (n18)."
+        }
       ],
       "feedback": [],
       "created": "2026-08-18T09:00:00.000Z",
@@ -61,7 +64,10 @@
       "source": "claude",
       "links": [],
       "notes": [
-        { "ts": "2026-08-18T10:10:00.000Z", "text": "Picked four: quadruped gait controller, drone mapper, pick-and-place arm, this site. Dropped the coursework ones. List lives in content/plan.md." }
+        {
+          "ts": "2026-08-18T10:10:00.000Z",
+          "text": "Picked four: quadruped gait controller, drone mapper, pick-and-place arm, this site. Dropped the coursework ones. List lives in content/plan.md."
+        }
       ],
       "feedback": [],
       "created": "2026-08-18T09:05:00.000Z",
@@ -82,7 +88,10 @@
       "source": "claude",
       "links": [],
       "notes": [
-        { "ts": "2026-08-18T11:00:00.000Z", "text": "One page per project with the same four sections: problem, what I built, result, what I would do next. No blog. About page stays one screen long." }
+        {
+          "ts": "2026-08-18T11:00:00.000Z",
+          "text": "One page per project with the same four sections: problem, what I built, result, what I would do next. No blog. About page stays one screen long."
+        }
       ],
       "feedback": [],
       "created": "2026-08-18T09:05:00.000Z",
@@ -141,7 +150,10 @@
       "source": "claude",
       "links": [],
       "notes": [
-        { "ts": "2026-08-18T13:40:00.000Z", "text": "Plain HTML and CSS in site/, no framework; preview with `python3 -m http.server` from site/. Deploying means copying the folder." }
+        {
+          "ts": "2026-08-18T13:40:00.000Z",
+          "text": "Plain HTML and CSS in site/, no framework; preview with `python3 -m http.server` from site/. Deploying means copying the folder."
+        }
       ],
       "feedback": [],
       "created": "2026-08-18T09:05:00.000Z",
@@ -217,10 +229,17 @@
       "status": "in_progress",
       "status_reason": null,
       "source": "claude",
-      "links": ["n3"],
+      "links": [
+        "n3"
+      ],
       "notes": [],
       "feedback": [
-        { "ts": "2026-08-21T16:20:00.000Z", "text": "Lead with the video on each project page, the text can come after. The gait page feels like a report right now.", "read": false, "kind": "feedback" }
+        {
+          "ts": "2026-08-21T16:20:00.000Z",
+          "text": "Lead with the video on each project page, the text can come after. The gait page feels like a report right now.",
+          "read": false,
+          "kind": "feedback"
+        }
       ],
       "created": "2026-08-20T09:00:00.000Z",
       "updated": "2026-08-21T16:20:00.000Z",
@@ -330,16 +349,22 @@
       "what": "A PDF résumé in the site folder and a download link on the home page and the about page.",
       "why": "Recruiters forward PDFs, not websites.",
       "done_when": "Clicking the link downloads the current résumé on a phone and a laptop.",
-      "status": "blocked",
-      "status_reason": "waiting on user: which résumé version should go up, the academic one or the industry one?",
+      "status": "done",
+      "status_reason": null,
       "source": "claude",
       "links": [],
-      "notes": [],
+      "notes": [
+        {
+          "ts": "2026-08-21T10:20:00.000Z",
+          "actor": "claude",
+          "text": "assumed the industry résumé because the goal is interviews, not a PhD; say so if wrong. PDF lives at /files/resume.pdf."
+        }
+      ],
       "feedback": [],
       "created": "2026-08-20T09:00:00.000Z",
-      "updated": "2026-08-21T10:00:00.000Z",
-      "started_at": null,
-      "finished_at": null
+      "updated": "2026-08-21T10:20:00.000Z",
+      "started_at": "2026-08-21T10:00:00.000Z",
+      "finished_at": "2026-08-21T10:20:00.000Z"
     },
     "n17": {
       "id": "n17",
@@ -368,14 +393,14 @@
       "what": "A short domain that is my name or close to it, bought and pointed at the host.",
       "why": "The address goes on the résumé, so it has to be easy to type and permanent.",
       "done_when": "The domain is registered and shows a placeholder page.",
-      "status": "pending",
-      "status_reason": null,
+      "status": "blocked",
+      "status_reason": "waiting on user: buy cedrichollande.com (about $12 a year on your card) or stay on the free github.io address? Paid, and the address goes on your résumé.",
       "source": "claude",
       "links": [],
       "notes": [],
       "feedback": [],
       "created": "2026-08-18T09:05:00.000Z",
-      "updated": "2026-08-18T09:05:00.000Z",
+      "updated": "2026-08-21T10:30:00.000Z",
       "started_at": null,
       "finished_at": null
     },
@@ -409,7 +434,9 @@
       "status": "pending",
       "status_reason": null,
       "source": "claude",
-      "links": ["n10"],
+      "links": [
+        "n10"
+      ],
       "notes": [],
       "feedback": [],
       "created": "2026-08-18T09:05:00.000Z",
@@ -431,7 +458,12 @@
       "links": [],
       "notes": [],
       "feedback": [
-        { "ts": "2026-08-21T16:25:00.000Z", "text": "added by user under n0", "read": true, "kind": "added" }
+        {
+          "ts": "2026-08-21T16:25:00.000Z",
+          "text": "added by user under n0",
+          "read": true,
+          "kind": "added"
+        }
       ],
       "created": "2026-08-21T16:25:00.000Z",
       "updated": "2026-08-21T16:25:00.000Z",

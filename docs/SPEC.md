@@ -211,7 +211,7 @@ only when stdout is a TTY. No banners.
 
 `tree`
 ```
-<name>  <done>/<total> leaves done  <n> in progress  <k> unread
+<name>  <done>/<total> leaves done  <n> in progress  <b> blocked  <k> unread
 [~] n0  <name>  (3/12)
   [x] n1  Set up the project  (4/4)
   [~] n2  Build the maze  (1/5)
@@ -261,16 +261,18 @@ or `inbox empty`. Marks everything printed as read unless `--peek`.
 
 `status` (one line)
 ```
-<name>  <done>/<total> leaves done  in progress: n6 Build the maze walls  <k> unread  http://127.0.0.1:4242/?p=<id>
+<name>  <done>/<total> leaves done  in progress: n6 Build the maze walls  blocked: <b>  <k> unread  http://127.0.0.1:4242/?p=<id>
 ```
 
 `check`
 ```
 in_progress: n2  Build the maze
 in_progress: n6  Build the maze walls  (leaf)
+blocked: 1
+waiting: n8  Tune the wall colors  waiting on user: which palette?
 unread: 2
 ```
-`check --json` → `{"map":true,"id":"…","name":"…","in_progress":[{"id":"n6","title":"…","leaf":true}],"unread":2}`. Without a map: `no map` / `{"map":false}`. Exit 0 always. The root is never reported as in progress.
+`check --json` → `{"map":true,"id":"…","name":"…","in_progress":[{"id":"n6","title":"…","leaf":true}],"blocked":[{"id":"n8","title":"…","reason":"…"}],"unread":2}`. One `waiting:` line per blocked node. Without a map: `no map` / `{"map":false}`. Exit 0 always. The root is never reported as in progress.
 
 `add` prints the new id. `add --batch` prints one `key -> id` line per item.
 `init` prints `n0  <name>  <url>` (or `status` output when the map already exists).
@@ -281,7 +283,7 @@ unread: 2
 `config prompt-reminder on|off` toggles `prompt_reminder` in `~/.taskmap/config.json`; bare `config` prints the file.
 
 Hooks read the event JSON on stdin and print what Claude should see:
-- `hook session-start`: `[taskmap] Map found: <name>, <done>/<total> done, <n> in progress, <k> unread. Run /taskmap to resume.` or nothing. When `source` is `compact`: a `[taskmap] Context was compacted…` line, the `tree --open` output (depth reduced until it fits in 9,000 characters), the in-progress nodes and the unread count.
+- `hook session-start`: `[taskmap] Map found: <name>, <done>/<total> done, <n> in progress, <b> blocked, <k> unread. Run /taskmap to resume.` or nothing. When `source` is `compact`: a `[taskmap] Context was compacted…` line, the `tree --open` output (depth reduced until it fits in 9,000 characters), the in-progress nodes, the blocked nodes and the unread count.
 - `hook stop`: nothing when `stop_hook_active` is true or no leaf is in progress; otherwise `{"decision":"block","reason":"taskmap: n5 \"…\" is still in_progress …"}`.
 - `hook prompt`: nothing unless `prompt_reminder` is on, the prompt is over 400 characters, does not start with `/`, and no leaf is in progress; then one `[taskmap] Long prompt …` line.
 
