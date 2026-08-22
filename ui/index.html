@@ -21,12 +21,13 @@
     <div class="progress" title="done leaves / total leaves (skipped excluded)"><div id="progress-bar"></div></div>
     <span class="plabel"><span id="progress-label" class="mono">0/0</span> leaves</span>
     <span id="counts" class="counts"></span>
+    <a id="now" class="now" href="#" hidden title="What Claude is working on. Click to open it."></a>
     <span class="spacer"></span>
     <div class="seg" role="group" aria-label="View">
       <button type="button" data-view="graph" aria-pressed="true">Graph</button>
       <button type="button" data-view="outline" aria-pressed="false">Outline</button>
     </div>
-    <button type="button" id="fit-btn" title="Fit the graph to the window (f)">Fit</button>
+    <button type="button" id="fit-btn" title="Fit the map to the window (f)">Fit</button>
     <button type="button" id="add-top-btn" class="primary" aria-expanded="false">Add high-level task</button>
   </div>
   <form id="add-form" class="add-form" hidden>
@@ -38,6 +39,11 @@
     <span id="add-error" class="error" role="alert"></span>
   </form>
 </header>
+
+<div id="waiting" class="waiting" hidden>
+  <span class="w-label">Waiting on you</span>
+  <ul id="waiting-list"></ul>
+</div>
 
 <div id="body">
   <main id="main" class="view-graph">
@@ -54,26 +60,29 @@
         <g id="nodes"></g>
       </g>
     </svg>
-    <div id="outline" role="tree"></div>
+    <div id="outline"></div>
     <div id="empty" class="empty">No nodes yet. Claude adds them with <code>taskmap add</code>.</div>
   </main>
 
   <aside id="side">
     <section id="panel">
       <div id="panel-content" class="panel-content">
-        <div class="placeholder">Select a node to see its details.</div>
+        <div class="placeholder">Pick a bubble to see its details.</div>
       </div>
       <div id="panel-actions" class="panel-actions" hidden>
-        <label class="k" for="fb-text">Send feedback to Claude</label>
-        <textarea id="fb-text" rows="3" placeholder="Ctrl+Enter to send"></textarea>
-        <div class="btnrow">
-          <button type="button" id="fb-send" class="primary">Send</button>
-          <span class="muted hint">Claude reads it on its next <span class="mono">taskmap inbox</span></span>
+        <label class="k" for="fb-text">Message Claude about this task</label>
+        <div class="composer">
+          <textarea id="fb-text" rows="1" placeholder="Tell Claude something about this task…"></textarea>
+          <div class="c-row">
+            <span class="muted hint">Ctrl+Enter sends · read on the next <span class="mono">taskmap inbox</span></span>
+            <button type="button" id="fb-send" class="primary" disabled>Send</button>
+          </div>
         </div>
         <div class="btnrow actions">
           <button type="button" data-act="subtask">Add subtask</button>
           <button type="button" data-act="reopen">Reopen</button>
           <button type="button" data-act="block">Mark blocked</button>
+          <button type="button" data-act="skip">Not needed</button>
           <button type="button" data-act="done">Mark done</button>
         </div>
         <form id="inline-form" class="inline-form" hidden>

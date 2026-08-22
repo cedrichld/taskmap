@@ -6,7 +6,10 @@ tree of plain-language nodes (milestones, chunks, steps) with live status. You o
 tasks from the browser; those reach the running session as notifications. The map is
 also Claude's own durable plan: it survives compaction and restarts.
 
-![dashboard](docs/screenshot.png)
+![dashboard](docs/demo-1440.png)
+
+The design language (bubbles, rings, layout, motion, tokens) is in
+[docs/design/DESIGN.md](docs/design/DESIGN.md).
 
 Zero runtime dependencies. Node >= 20. Single user, local only (the server binds
 `127.0.0.1`, never `0.0.0.0`).
@@ -44,15 +47,21 @@ From the dashboard you can:
 
 - **Send feedback** on any node (Ctrl/Cmd+Enter). Claude sees
   `[taskmap] feedback on n12 "…": …` immediately and reads it with `taskmap inbox`.
-- **Add a high-level task** (header button) or **Add subtask** (side panel). They show
-  up with a `*`; Claude decomposes them when it reaches them.
+- **Add a high-level task** (header button) or **Add subtask** (side panel). They get
+  a dashed outer ring (`*` in the CLI tree); Claude decomposes them when it reaches them.
+- **Answer a blocked question**: the **Waiting on you** strip under the header lists
+  every blocked node with its question; **Reply** opens the message box on that node.
 - **Override a status**: Mark done, Mark blocked, Reopen. Logged as actor `ui`.
-- Switch between **Graph** (pan, zoom, `f` to fit, double-click to collapse) and
-  **Outline**, and read the **activity feed**.
+- Switch between **Graph** (pan, zoom, `f` to fit, click a count pill or double-click
+  to fold a branch) and **Outline**, and read the **activity feed**. The **Now** chip
+  names the leaf Claude is working on.
 
 Unread feedback stays highlighted until Claude runs `taskmap inbox`.
 
 ## Using the CLI yourself
+
+The `taskmap status`, `taskmap check` and session-start lines include a `blocked: n`
+count; `taskmap check` also prints one `waiting:` line per blocked node.
 
 ```
 taskmap init "<name>" --goal "<one sentence>" [--track]
@@ -106,6 +115,8 @@ Data model and API: [docs/SPEC.md](docs/SPEC.md).
 ```
 bash tests/smoke.sh        # temp project, isolated TASKMAP_HOME, its own port (4747)
 claude plugin validate .   # manifest and hook schema
+node tests/gen40.js <dir>  # registers a 40-node "Photo journal" map for layout checks
+node tests/shots.js <projectId> 1440x900 out.png [select=n10] [view=outline]   # headless Chrome render + console check
 ```
 
 ## Troubleshooting

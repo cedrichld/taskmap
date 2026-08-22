@@ -363,7 +363,14 @@ data: {"type":"ping"}
 - Projects with `exists: false` are greyed in the switcher and not selectable.
 - View choice (Graph | Outline) and collapsed node ids are kept in
   `sessionStorage` per project.
+- The graph is fit and centered on load and after every structural change
+  (nodes added or removed, a fold toggled) unless the user has panned or zoomed;
+  Fit / `f` restores auto-fit. Blocked nodes show their reason on the card (two
+  lines, then ellipsis) and in a "Waiting on you" strip under the header with a
+  Reply control that focuses the feedback box on that node.
 - The UI never marks feedback read on its own.
+- Visual language: `docs/design/DESIGN.md`. Headless renders: `tests/shots.js`;
+  a 40-node fixture: `tests/gen40.js`.
 
 ## 8. Plugin wiring
 
