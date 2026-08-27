@@ -1,32 +1,12 @@
 # taskmap dashboard — design language
 
 One screen, left open all day on a second monitor, that shows a plan as a tree of
-bubbles and lets the owner talk back. Charcoal paper by default (the use scene is a second
-monitor beside a terminal at any hour), cream paper when the system asks for light. Readable at arm's length for a 40-node map
+bubbles and lets the owner talk back. Dark only, because the use scene is a second
+monitor beside a terminal at any hour. Readable at arm's length for a 40-node map
 without panning. Everything moves for a reason or not at all.
 
 The reference points are Linear, Vercel and Raycast in 2026: confident and quiet,
 depth from layering rather than decoration, one accent, no gradients, no glow.
-
-## 0. Paper (editorial restyle, Aug 2026)
-
-The sheet the screen is drawn on is paper, not a void. By night (the default, and
-the only mode until this pass) it is warm charcoal paper — `--bg #1a1916`, raised
-surfaces `#23221f` / `#292825`, warm-white ink `#ece7dc`. By day
-(`prefers-color-scheme: light`) the same tokens turn into cream paper — `--bg
-#f3f0e8`, raised surfaces `#faf8f2` / `#fffdf8`, near-black ink `#1b1a16` with
-ink-tinted hairlines. Every colour in `style.css` is a token now, so the two modes
-are one stylesheet; the light block only re-declares values.
-
-Two overlays make it paper: `body::after` is grain (an SVG `feTurbulence` filter
-inlined as a data URI, 260 px tile, opacity .07 screened on charcoal / .05
-multiplied on cream) and `body::before` a faint radial vignette. Both are fixed,
-`pointer-events: none`, and faint enough not to move any text below its contrast.
-
-Titles carry the print voice: **Playfair Display**, self-hosted from `ui/fonts`
-(`--serif`), on the brand, project names, the root node, the panel title and the
-empty states; its italic on the goal tagline and empty placeholders. Everything
-dense — node titles, statuses, controls, the feed — stays in the sans.
 
 ## 1. Surfaces
 
