@@ -326,8 +326,8 @@ Hooks read the event JSON on stdin and print what Claude should see:
 
 | Command  | New status    | Also                                                |
 | -------- | ------------- | --------------------------------------------------- |
-| `start`  | `in_progress` | `started_at` if unset, `status_reason = null`. Warns if another node is already in progress. |
-| `done`   | `done`        | `finished_at = now`, `status_reason = null`, `--note` appends a note. Warns if leaves below are not done. |
+| `start`  | `in_progress` | `started_at` if unset, `status_reason = null`. Pending ancestors (root excluded) become `in_progress` too, logged as `start` events with `detail.via`. Warns if another leaf is already in progress. |
+| `done`   | `done`        | `finished_at = now`, `status_reason = null`, `--note` appends a note. Ancestors whose every leaf is now done or skipped become `done` too (`detail.via`); the CLI prints them as `also done: n1, n4`. Warns if leaves below are not done. `--next` then starts the next actionable leaf and prints `next: <id>  <title>  — <what>` plus its `done_when`, or `next: none  <reason>`. `--state ".."` appends a note to the root. |
 | `block`  | `blocked`     | `status_reason = reason` (required).                |
 | `skip`   | `skipped`     | `status_reason = reason` (required).                |
 | `reopen` | `pending`     | `status_reason = null`, `finished_at = null`.       |
@@ -367,7 +367,7 @@ project or node, or project directory missing), 500 (unexpected).
 | GET | `/p/<id>` | | the project page (`ui/project.html`); the id is read client-side |
 | GET | `/app.js` `/overview.js` `/style.css` `/vendor/d3.v7.min.js` | | static files from `ui/` |
 | GET | `/api/health` | | `{ "ok": true, "app": "taskmap", "version": "0.1.0", "pid": 123, "port": 4242 }` |
-| GET | `/api/projects` | | `{ "projects": [ { "id", "name", "path", "goal", "updated", "exists", "live", "sessions", "clients", "progress": { "done", "total" } \| null, "in_progress": n, "in_progress_titles": [..], "blocked": b, "unread": k } ] }` newest first |
+| GET | `/api/projects` | | `{ "projects": [ { "id", "name", "path", "goal", "updated", "exists", "live", "sessions", "clients", "progress": { "done", "total" } \| null, "in_progress": n, "in_progress_titles": [..], "focus": { "id", "title", "path": [milestone titles, root excluded], "note": last note text, "since": started_at } \| null, "blocked": b, "unread": k } ] }` newest first. `focus` is the in-progress leaf (or the first in-progress node), what the dashboard's Now banner and the overview card show. |
 | GET | `/api/clients` | | `{ "ok": true, "total": n, "projects": { "<id>": n }, "sessions": { "<id>": n }, "session_ttl_ms": 60000 }` |
 | GET | `/api/projects/:id` | | `{ "project": { "id", "name", "path", "updated", "exists", "url" }, "map": <map.json>, "log": [ last 100 log lines, oldest first ] }` |
 | GET | `/api/projects/:id/events` | | SSE, see below |

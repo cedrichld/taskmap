@@ -132,6 +132,20 @@ const unreadOf = (n) => (n.feedback || []).filter((f) => !f.read).length;
 function unreadCount() { return Object.values(state.map.nodes).reduce((s, n) => s + unreadOf(n), 0); }
 const byId = (a, b) => idNum(a.id) - idNum(b.id);
 function blockedNodes() { return Object.values(state.map.nodes).filter((n) => n.status === 'blocked' && n.id !== rootId()).sort(byId); }
+// Milestone › chunk titles above a node, root excluded: where on the map Claude is.
+function focusPath(id) {
+  const out = [];
+  let n = nodeOf(id);
+  while (n && n.parent !== null && n.parent !== undefined && n.parent !== rootId()) {
+    n = nodeOf(n.parent);
+    if (n) out.unshift(n.title);
+  }
+  return out;
+}
+function lastNote(n) {
+  const notes = (n && n.notes) || [];
+  return notes.length ? String(notes[notes.length - 1].text || '') : '';
+}
 function nowNode() {
   const ip = Object.values(state.map.nodes).filter((n) => n.status === 'in_progress' && n.id !== rootId()).sort(byId);
   return ip.find((n) => !hasKids(n.id)) || ip[0] || null;
@@ -512,7 +526,14 @@ function renderHeader() {
   nowEl.hidden = !now;
   if (now) {
     nowEl.dataset.sel = now.id;
-    nowEl.innerHTML = `<span class="k">Now</span><span class="t" title="${esc(now.title)}">${esc(now.title)}</span>${now.started_at ? `<span class="ago">for <span class="mono">${esc(ago(now.started_at))}</span></span>` : ''}`;
+    const path = focusPath(now.id);
+    const note = lastNote(now);
+    nowEl.title = `${path.concat(now.title).join(' › ')}${note ? '\n' + note : ''}`;
+    nowEl.innerHTML = `<span class="k">Now</span>`
+      + (path.length ? `<span class="path">${path.map(esc).join(' › ')} ›</span>` : '')
+      + `<span class="t">${esc(now.title)}</span>`
+      + (now.started_at ? `<span class="ago">for <span class="mono">${esc(ago(now.started_at))}</span></span>` : '')
+      + (note ? `<span class="note">${esc(note)}</span>` : '');
   }
   renderWaiting();
   tickUpdated();
@@ -603,7 +624,9 @@ function emptyPanelHtml() {
       <button type="button" class="primary w-reply" data-reply="${esc(b.id)}">${icon('reply')} Answer this</button>
     </div>`;
   } else if (now) {
-    head = `<div><h2>Claude is working</h2><p class="lead">On <strong>${esc(now.title)}</strong>${now.started_at ? `, for ${esc(ago(now.started_at))}` : ''}. Pick any bubble to read it or send a message about it.</p></div>`;
+    const path = focusPath(now.id);
+    const note = lastNote(now);
+    head = `<div><h2>Claude is working</h2><p class="lead">On <strong>${esc(now.title)}</strong>${path.length ? ` (${esc(path.join(' › '))})` : ''}${now.started_at ? `, for ${esc(ago(now.started_at))}` : ''}.${note ? ` Last note: <em>${esc(note)}</em>.` : ''} Pick any bubble to read it or send a message about it.</p></div>`;
   } else if (p.total && p.done === p.total) {
     head = `<div><h2>All done</h2><p class="lead">Every task on this map is finished. Pick a bubble to read what was decided.</p></div>`;
   } else {

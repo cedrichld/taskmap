@@ -56,7 +56,12 @@ function cardHtml(p) {
   if (p.exists && now.length) {
     // In progress with nobody working on it is a stalled run, not a healthy one.
     const stalled = !p.live ? '<p class="ov-stalled">no session running</p>' : '';
-    nowHtml = `<ul class="ov-now">${now.map((t) => `<li><i class="rundot"></i>${esc(t)}</li>`).join('')}${more > 0 ? `<li class="muted">and ${more} more</li>` : ''}</ul>${stalled}`;
+    const f = p.focus;
+    const focusHtml = f
+      ? `<p class="ov-focus"><i class="rundot"></i>${f.path && f.path.length ? `<span class="ov-path">${f.path.map(esc).join(' › ')} ›</span> ` : ''}<strong>${esc(f.title)}</strong>${f.since ? ` <span class="muted">for ${esc(ago(f.since).replace(/ ago$/, ""))}</span>` : ''}${f.note ? `<br><em class="ov-note">${esc(f.note)}</em>` : ''}</p>`
+      : '';
+    const rest = f ? now.filter((t) => t !== f.title && !(f.path || []).includes(t)) : now;
+    nowHtml = `${focusHtml}${rest.length ? `<ul class="ov-now">${rest.map((t) => `<li>${esc(t)}</li>`).join('')}${more > 0 ? `<li class="muted">and ${more} more</li>` : ''}</ul>` : ''}${stalled}`;
   } else if (!p.exists) {
     nowHtml = '<p class="ov-idle">Directory missing.</p>';
   } else if (pr.total && pr.done === pr.total) {

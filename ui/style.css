@@ -167,6 +167,9 @@ a.brand:hover { text-decoration: none; color: var(--accent); }
 .now .k { color: var(--accent); font-weight: 600; text-transform: none; letter-spacing: 0.02em; }
 .now .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .now .ago, .now .ago .mono { color: var(--muted); white-space: nowrap; }
+.now .path { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32ch; flex: 0 1 auto; }
+.now .note { color: var(--muted); font-style: italic; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 12ch; }
+.now .note::before { content: '·'; margin-right: 0.5em; font-style: normal; }
 .add-form { display: flex; align-items: center; gap: 8px; padding: 9px 0; border-top: 1px solid var(--hairline); }
 .add-form input { flex: 1; min-width: 0; }
 .add-form #add-title { flex: 1.4; }
@@ -639,3 +642,9 @@ kbd {
 @media (max-width: 767px) {
   #outline .card .status { display: none; }
 }
+
+/* Overview: where Claude is focused right now */
+.ov-focus { margin: 0 0 10px; font-size: 12.5px; line-height: 1.45; display: block; }
+.ov-focus .rundot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); margin-right: 8px; vertical-align: middle; }
+.ov-focus .ov-path { color: var(--muted); }
+.ov-focus .ov-note { color: var(--muted); font-style: italic; }

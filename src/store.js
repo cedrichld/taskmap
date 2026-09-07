@@ -853,6 +853,14 @@ function setStatus(map, ctx, id, status, { reason = null, note = null, override 
   if (status === 'in_progress') {
     if (!n.started_at) n.started_at = ctx.now;
     n.finished_at = null;
+    // Starting a node starts the pending milestones above it: one call, not three.
+    for (const a of ancestors(map, id).map((x) => map.nodes[x])) {
+      if (!a || a.id === map.root || a.status !== 'pending') continue;
+      a.status = 'in_progress';
+      a.started_at = a.started_at || ctx.now;
+      ctx.touched.add(a.id);
+      ctx.events.push({ type: 'start', node: a.id, detail: { from: 'pending', to: 'in_progress', via: id } });
+    }
     if (isLeaf(map, id)) {
       const others = inProgressNodes(map).filter((o) => o.id !== id && isLeaf(map, o.id));
       if (others.length) ctx.warnings.push(`also in progress: ${others.map((o) => `${o.id} ${o.title}`).join('; ')} (one leaf at a time)`);
@@ -861,6 +869,19 @@ function setStatus(map, ctx, id, status, { reason = null, note = null, override 
     n.finished_at = ctx.now;
     const open = leavesUnder(map, id).filter((l) => l.status !== 'done' && !effectivelySkipped(map, l.id));
     if (open.length) ctx.warnings.push(`${open.length} leaf(s) under ${id} not done: ${open.slice(0, 5).map((l) => l.id).join(', ')}`);
+    // A parent whose every leaf is now done or skipped closes with it.
+    ctx.closed = ctx.closed || [];
+    for (const a of ancestors(map, id).map((x) => map.nodes[x])) {
+      if (!a || a.id === map.root || a.status === 'done' || a.status === 'skipped') continue;
+      const left = leavesUnder(map, a.id).filter((l) => l.status !== 'done' && !effectivelySkipped(map, l.id));
+      if (left.length) break;
+      a.status = 'done';
+      a.status_reason = null;
+      a.finished_at = ctx.now;
+      ctx.touched.add(a.id);
+      ctx.closed.push(a.id);
+      ctx.events.push({ type: 'done', node: a.id, detail: { from: 'in_progress', to: 'done', via: id } });
+    }
   } else if (status === 'pending') {
     n.finished_at = null;
   }

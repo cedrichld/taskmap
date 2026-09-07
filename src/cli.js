@@ -8,7 +8,7 @@ const { spawn } = require('child_process');
 const store = require('./store');
 const { UserError } = store;
 
-const BOOL_FLAGS = new Set(['track', 'open', 'all', 'peek', 'json', 'force', 'batch', 'ensure', 'stop', 'restart', 'foreground', 'help', 'version', 'quiet', 'if-needed']);
+const BOOL_FLAGS = new Set(['track', 'open', 'all', 'peek', 'json', 'force', 'batch', 'ensure', 'stop', 'restart', 'foreground', 'help', 'version', 'quiet', 'if-needed', 'next']);
 const LIST_FLAGS = new Set(['link', 'unlink']);
 
 const GLYPH = { pending: '[ ]', in_progress: '[~]', done: '[x]', blocked: '[!]', skipped: '[-]' };
@@ -54,9 +54,11 @@ function usage() {
   return [
     'taskmap <command> [args]   (state: <project>/.taskmap/, dashboard: ' + store.baseUrl() + ')',
     '  init "<name>" --goal "<one sentence>" [--track]',
-    '  add "<title>" --parent <id> [--what ..] [--why ..] [--done-when ..] [--link <id>].. [--after <id>] [--source user]',
-    '  add --batch < items.json      [{key, parent, title, what, why, done_when, links}]',
-    '  start <id> | done <id> [--note ".."] | block <id> --reason ".." | skip <id> --reason ".." | reopen <id>',
+    '  add "<title>" --parent <id> [--what ..] [--done-when ..] [--why ..] [--link <id>].. [--after <id>] [--source user]',
+    '  add --batch < items.json      [{key, parent, title, what?, done_when?, why?, links?}]',
+    '  start <id> [--note ".."]        also starts its pending parents',
+    '  done <id> [--note ".."] [--next] [--state ".."]   --next starts the next leaf; --state notes where things stand on n0',
+    '  block <id> --reason ".." | skip <id> --reason ".." | reopen <id>',
     '  edit <id> [--title|--what|--why|--done-when|--parent|--order|--link|--unlink ..] [--force]',
     '  note <id> "<text>"',
     '  tree [--open|--all] [--depth N] | show <id> | next | inbox [--peek] | status | check [--json]',
@@ -127,7 +129,8 @@ function nodeLine(map, n, level, hasKids) {
 
 function headerLine(map) {
   const p = store.progress(map);
-  return `${map.name}  ${p.done}/${p.total} leaves done  ${store.inProgressNodes(map).length} in progress  ${store.blockedNodes(map).length} blocked  ${store.unreadCount(map)} unread`;
+  const ip = store.inProgressNodes(map).filter((n) => store.isLeaf(map, n.id)).length;
+  return `${map.name}  ${p.done}/${p.total} leaves done  ${ip} in progress  ${store.blockedNodes(map).length} blocked  ${store.unreadCount(map)} unread`;
 }
 
 function renderTree(map, { open = true, depth = Infinity } = {}) {
@@ -191,7 +194,7 @@ function inboxLines(map) {
 
 function statusLine(map) {
   const p = store.progress(map);
-  const ip = store.inProgressNodes(map);
+  const ip = store.inProgressNodes(map).filter((n) => store.isLeaf(map, n.id));
   const ipText = ip.length ? ip.map((n) => `${n.id} ${n.title}`).join('; ') : 'none';
   return `${map.name}  ${p.done}/${p.total} leaves done  in progress: ${ipText}  blocked: ${store.blockedNodes(map).length}  ${store.unreadCount(map)} unread  ${store.projectUrl(map.id)}`;
 }
@@ -336,8 +339,25 @@ function cmdAdd({ pos, flags }) {
 
 function cmdSetStatus(status, { pos, flags }) {
   const id = nodeId(pos);
-  doMutate(flags, (map, ctx) => store.setStatus(map, ctx, id, status, { reason: flags.reason, note: flags.note }));
-  out(id);
+  const lines = [];
+  doMutate(flags, (map, ctx) => {
+    store.setStatus(map, ctx, id, status, { reason: flags.reason, note: flags.note });
+    let line = id;
+    if (ctx.closed && ctx.closed.length) line += `  also done: ${ctx.closed.join(', ')}`;
+    lines.push(line);
+    if (flags.state) store.addNote(map, ctx, map.root, flags.state);
+    if (status === 'done' && flags.next) {
+      const r = store.nextActionable(map);
+      if (!r.id) {
+        lines.push(`next: none  ${r.none}`);
+      } else {
+        const n = store.setStatus(map, ctx, r.id, 'in_progress');
+        lines.push(`next: ${n.id}  ${n.title}${n.what ? '  — ' + n.what : ''}`);
+        if (n.done_when) lines.push(`done_when: ${n.done_when}`);
+      }
+    }
+  });
+  for (const l of lines) out(l);
 }
 
 function cmdEdit({ pos, flags }) {
@@ -725,7 +745,7 @@ async function hookSessionStart(input, cwd, flags) {
   if (!dir) return;
   const map = store.readMap(dir);
   const p = store.progress(map);
-  const ip = store.inProgressNodes(map);
+  const ip = store.inProgressNodes(map).filter((n) => store.isLeaf(map, n.id));
   const unread = store.unreadCount(map);
   const blocked = store.blockedNodes(map);
   if (input.source === 'compact') {
@@ -763,7 +783,7 @@ function hookStop(input, cwd, flags) {
   const list = leaves.map((n) => `${n.id} "${n.title}"`).join(', ');
   out(JSON.stringify({
     decision: 'block',
-    reason: `taskmap: ${list} is still in_progress on the map. Close it out before ending the turn: taskmap done <id> --note "<decision; where the code lives>" if it is finished, taskmap block <id> --reason "waiting on user: <question>" if it waits on the user, or taskmap reopen <id> plus taskmap note <id> "<where you stopped>". Then taskmap note n0 "State: ... Next: ...".`,
+    reason: `taskmap: ${list} still in progress. Before ending: taskmap done <id> --note ".." --state "State: .. Next: .." if finished; taskmap block <id> --reason "waiting on user: .." if it waits on the user; else taskmap reopen <id> --note "<where you stopped>".`,
   }));
 }
 

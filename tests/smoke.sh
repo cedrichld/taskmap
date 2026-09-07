@@ -93,6 +93,7 @@ contains "show prints done_when" "$out" "done_when: The player cannot cross a wa
 # ---- status commands --------------------------------------------------
 equals "start prints id" "$("$TM" start n3 2>/dev/null)" "n3"
 contains "tree shows in_progress glyph" "$("$TM" tree)" "[~] n3"
+contains "start also starts the parent" "$("$TM" tree)" "[~] n1  Build the maze"
 equals "done prints id" "$("$TM" done n3 --note "grid is a text file" 2>/dev/null)" "n3"
 contains "tree shows done glyph" "$("$TM" tree)" "[x] n3"
 contains "next honours links" "$("$TM" next)" "n5  Draw the wall rectangles"
@@ -135,7 +136,7 @@ out2=$("$TM" serve --ensure 2>&1)
 contains "serve --ensure is idempotent" "$out2" "server running at $URL"
 health=$(curl -s -m 2 "$URL/api/health")
 contains "health" "$health" '"ok":true'
-ID=$("$TM" check --json | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+ID=$("$TM" check --json | sed -n 's/^{"map":true,"id":"\([^"]*\)".*/\1/p')
 [ -n "$ID" ] && ok "check --json has id ($ID)" || bad "check --json has no id"
 contains "api projects lists it" "$(curl -s "$URL/api/projects")" "\"id\":\"$ID\""
 full=$(curl -s "$URL/api/projects/$ID")
@@ -358,7 +359,7 @@ hook() { # name json
 }
 contains "session-start prints the summary" "$(hook session-start "{\"source\":\"startup\",\"cwd\":\"$PWD\"}")" "[taskmap] Map found: Pac-Man clone, 0/4 done, 0 in progress, 0 blocked, 0 unread. Run /taskmap to resume."
 out=$(hook session-start "{\"source\":\"compact\",\"cwd\":\"$PWD\"}")
-contains "compact re-injects the tree" "$out" "[ ] n0  Pac-Man clone  (0/4)"
+contains "compact re-injects the tree" "$out" "[~] n1  Build the maze"
 contains "compact keeps the indentation" "$out" "      [ ] n5  Draw the wall rectangles"
 contains "compact names the map" "$out" "[taskmap] Context was compacted."
 equals "session-start is silent without a map" "$(cd "$TMP" && hook session-start "{\"source\":\"startup\",\"cwd\":\"$TMP\"}")" ""
@@ -385,7 +386,7 @@ contains "export reports the count" "$out" "notes -> $TMP/vault"
 note=$(cat "$TMP/vault/n4 Build the maze walls.md")
 contains "export links the parent" "$note" "**Parent:** [[n1 Build the maze]]"
 contains "export links dependencies" "$note" "**Depends on:** [[n3 Decide the grid format]]"
-contains "export has frontmatter" "$note" "status: pending"
+contains "export has frontmatter" "$note" "status: in_progress"
 
 # ---- lock contention --------------------------------------------------
 for i in $(seq 1 20); do "$TM" note n0 "concurrent note $i" >/dev/null 2>&1 & done

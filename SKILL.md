@@ -1,164 +1,97 @@
 ---
 name: taskmap
-description: Live task map for multi-step work — a tree of plain-language nodes that the user watches at http://localhost:4242 and comments on, and that survives compaction and restarts. Use at the start of ANY task that will take more than a few minutes or touch several files — new projects, features, websites, games, refactors, migrations, long debugging, anything with more than three steps — before writing code. Use it even if the user never mentions a plan, a map, or taskmap; the user expects it by default.
-when_to_use: Requests that build, make, create, implement, set up, scaffold, add, extend, refactor, migrate, port, or fix something whose cause is unknown; writing a site, app, game, tool, or library; any ask that needs a plan. Also when a session starts with a "[taskmap] Map found" line, when a "[taskmap]" notification arrives mid-session, or when the user says taskmap, map, plan, dashboard, roadmap, or "track this". Skip only for questions, one-line answers, and single-file edits that take a minute.
+description: Live task map the user watches at http://localhost:4242 while Claude works — a tree of plain-language nodes that survives compaction and restarts. Use at the start of any task longer than a few minutes or touching several files, before writing code, even if the user never mentions it. Skip for questions and one-file edits.
+when_to_use: Requests that build, implement, set up, add, refactor, migrate, port, or fix something whose cause is unknown; a "[taskmap] Map found" line at session start; a "[taskmap]" notification mid-session; the words taskmap, map, plan, dashboard, roadmap, or "track this".
 allowed-tools: Bash(taskmap *)
 ---
 
 # taskmap
 
-The map is the plan. It lives in `<project>/.taskmap/map.json`, the user watches it
-at http://localhost:4242, and it outlives compaction and restarts. You talk to it only
-through the `taskmap` CLI, which is already on PATH. Its output is terse on purpose:
-read it, do not re-derive it.
+The map is the plan and the user's window into what you are doing. It lives in
+`<project>/.taskmap/map.json`; you touch it only through the `taskmap` CLI. Its output
+is terse: read it, do not re-derive it.
 
-## 1. First action
+**Cost rule: a taskmap command never gets a tool call of its own.** Chain it with the
+real work in the same Bash call: `taskmap done n7 --next && npm test`,
+`taskmap start n8 && cat src/x.js`. Every separate call re-reads the whole conversation.
 
-Run `taskmap status`.
+## 1. Start
 
-- A map exists: `taskmap open --if-needed` (it starts the server and opens the
-  dashboard only if nothing is watching this project), then `taskmap tree --open`,
-  then `taskmap inbox`, then continue from `taskmap next`. Do not re-plan what is
-  already on the map.
-- No map (`error: no taskmap here`): `taskmap init "<name>" --goal "<one sentence>"`,
-  which does the same open, then tell the user the dashboard URL once, in one line.
-  Not again unless asked.
+`taskmap status`. Map exists: `taskmap open --if-needed && taskmap tree --open && taskmap inbox`,
+then continue from the first open leaf; never re-plan what is already there. No map:
+`taskmap init "<name>" --goal "<one sentence>"`, mention the dashboard URL once.
 
-Run `open --if-needed` **once**, here. It is not reopened later in the session, even
-if the user closes the tab — closing it is a choice. Run it again only when the
-project changes. With more than one project registered, the session-start line also
-names an overview page listing all of them.
+## 2. Plan
 
-## 2. Plan before code
-
-Put the plan on the map before writing any code, in one call:
-
-1. 3 to 8 milestones under `n0` that a non-expert would recognize as the shape of the project.
-2. One level of concrete chunks under the first milestone only.
-
-Use a single `add --batch`. Keys are your own labels; `parent` and `links` may name
-earlier keys or existing ids. Every item carries `title`, `what`, `why`, `done_when`:
+Before code, one `add --batch`: 3 to 8 milestones under `n0`, plus one level of chunks
+under the first milestone only. Deeper levels are added when reached; depth is capped at 3.
 
 ```bash
-taskmap add --batch <<'EOF'
+taskmap add --batch <<'JSON'
 [
- {"key":"m1","parent":"n0","title":"Build the maze","what":"...","why":"...","done_when":"..."},
- {"key":"m2","parent":"n0","title":"Make the ghosts chase the player","what":"...","why":"...","done_when":"..."},
- {"key":"c1","parent":"m1","title":"Decide the grid format","what":"...","why":"...","done_when":"..."},
- {"key":"c2","parent":"m1","title":"Build the maze walls","links":["c1"],"what":"...","why":"...","done_when":"..."}
+ {"key":"m1","parent":"n0","title":"Build the maze","done_when":"Maze is visible and walls block the player"},
+ {"key":"m2","parent":"n0","title":"Make the ghosts chase the player"},
+ {"key":"c1","parent":"m1","title":"Decide the grid format","what":"Text grid, 1 = wall"},
+ {"key":"c2","parent":"m1","title":"Build the maze walls","links":["c1"]}
 ]
-EOF
+JSON
 ```
 
-Then paste `taskmap tree` into your reply so the plan is visible in the terminal too.
-Do not plan level 3, or level 2 of later milestones, until you reach them. Depth below
-the root is capped at 3 (milestone, chunk, step).
+Fields, each one line, written for someone who does not know the stack:
 
-## 3. Naming
+- `title` (required): 2 to 6 words, verb first, no library names. "Make the ghosts
+  chase the player", not "Implement BFS in GhostAI.ts".
+- `done_when`: one observable check. On milestones, and on leaves whose finish is not
+  obvious from the title.
+- `what`: only when the title is not enough. Longer text is allowed only when you are
+  using it to think a problem through (a design choice, a tricky bug); that is the one
+  place detail pays for itself.
+- `why`: omit.
 
-Write every node for someone who does not know the stack.
+Paste `taskmap tree` into the reply once so the plan is in the terminal too.
 
-- `title`: 2 to 6 words, verb first, plain English, no library or framework names.
-- `what`: 1 to 3 sentences describing what exists when the node is done. Frameworks may
-  appear here, each explained in a clause: "three.js, the library that draws the 3D scene".
-- `why`: 1 to 2 sentences on how the node serves the goal and what depends on it.
-- `done_when`: one observable check a human could perform.
-
-| Bad title                                   | Good title                              |
-| ------------------------------------------- | --------------------------------------- |
-| Implement BFS pursuit in GhostAI.ts         | Make the ghosts chase the player        |
-| Set up Vite + React + TS scaffolding        | Set up the project                      |
-| Migrate Sequelize models to Prisma schema   | Replace the database layer              |
-
-## 4. Execution loop
+## 3. Work
 
 ```bash
-taskmap next                 # the first actionable leaf, with its what and done_when
-taskmap start <id>           # too big for one sitting (~20 min)? decompose it first with add --batch, then next again
-# ... do the work ...
-# verify done_when honestly: run it, open it, read it
-taskmap done <id> --note "<what was decided; where the code lives>"
-taskmap inbox                # pick up feedback before choosing the next node
+taskmap start <id>                       # starts its milestones too; --note ".." if you already know something
+# ... work; verify done_when honestly: run it, open it, read it ...
+taskmap done <id> --note "<decision; where the code lives>" --next
+                                         # closes finished parents, starts and prints the next leaf
 ```
 
-Exactly one leaf in progress per agent at any time. `start` a milestone or chunk when
-you begin its first leaf; `done` it only after verifying its own `done_when`.
+One leaf in progress at a time. The user watches the in-progress leaf on the dashboard,
+so `start` before the work, not after. Too big for ~20 minutes? `add --batch` under it first.
 
-## 5. Everything you do is on the map
+- Discovered work: `taskmap add "<title>" --parent <id>` before doing it.
+- Dead end: `skip <id> --reason ".."`. Changed shape: `edit <id> --title|--what|--done-when|--parent|--link ..`.
+- Unclear? Decide and record: `taskmap note <id> "assumed X because Y; say so if wrong"`.
+  Do not stop to ask.
+- `block <id> --reason "waiting on user: <question>"` only for costly or irreversible
+  choices with no sane default: paid services, deleting data, public deploys, a product
+  choice that changes most of the plan. Ask in one line in chat, `taskmap next`, keep working.
 
-- Work you discover becomes a node before you do it:
-  `taskmap add "<title>" --parent <id> --what ".." --why ".." --done-when ".."`.
-- A dead end becomes `taskmap skip <id> --reason "<why>"`.
-- A change of shape is `taskmap edit <id> --parent|--title|--what|--why|--done-when|--link|--unlink ..`.
-- Never silently change scope. If the map says X and you are doing Y, fix the map first.
+## 4. Feedback
 
-**Ambiguity: decide and record.** When something is unclear, pick the most reasonable
-option, write it on the node, and keep going:
-`taskmap note <id> "assumed <X> because <Y>; say so if wrong"`. The user reads notes on
-the dashboard and pushes back through feedback whenever they disagree. Do not stop to ask.
+A `[taskmap] feedback on n12 ...` line can arrive at any time; `taskmap inbox` lists what
+is unread. Note the gist on the node, adjust the plan (`reopen`, `edit`, `add`, `skip`),
+tell the user in one line, continue. Feedback on a blocked node is its answer: `reopen`,
+`start`, finish it first. User-added nodes (`*`) have no `what`; fill in the most
+plausible intent when you reach them.
 
-**Blocking is the exception.** `taskmap block <id> --reason "waiting on user: <question>"`
-is allowed only when all three hold:
+## 5. Ending a turn
 
-1. The decision is costly or hard to reverse: paid services, deleting data, public
-   deploys, account or credential actions, or a product choice that changes most of the
-   remaining plan.
-2. No reasonable default exists.
-3. The node cannot be deferred to the end of the run.
+The Stop hook refuses to end while a leaf is in progress. Close it in the last real call:
+`taskmap done <id> --note ".." --state "State: <where things are>. Next: <step>. Waiting on you: <question or nothing>"`,
+or `block` / `reopen --note "<where you stopped>"` it. End the reply with one
+`Waiting on you:` line.
 
-| Block                                                          | Decide and note                                                  |
-| -------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Publish the site to the paid hosting tier or the free one?     | Ghost speed? "assumed 4 tiles/s because classic feel; say so if wrong" |
-| Drop the old orders table now that the migration ran?          | Dark or light theme? "assumed dark because the mockup was dark"  |
+## 6. Subagents
 
-A blocked node never stops the run. Block it, ask the question in chat in one line, run
-`taskmap next`, and keep working for as long as anything is actionable. Do not wait for
-the answer.
+Hand a subagent node ids, not the map; it runs `start`, `note`, `done` on those ids only.
+The lead verifies the work and owns the tree.
 
-## 6. User feedback
+## 7. Keep it small
 
-A notification such as `[taskmap] feedback on n12 "Build the maze walls": walls should be
-half as tall` can arrive at any moment, and `taskmap inbox` lists everything unread.
-
-1. Acknowledge on the node: `taskmap note <id> "User: <gist>. Doing: <change>."`
-2. Adjust the plan: `reopen`, `edit`, `add`, or `skip` as needed.
-3. Tell the user in one line, then keep going.
-
-Feedback on a blocked node is the answer to its question: `taskmap reopen <id>`,
-`taskmap note <id> "User answered: <gist>"`, then `start` it and finish it before
-anything else.
-
-User-added nodes (`*` in the tree) arrive with empty `what` and `done_when`. Decompose
-them when you reach them, filling in the most plausible intent and noting the assumption;
-`block` only when the three-part test above holds.
-
-## 7. Notes
-
-`taskmap note <id> "<one line>"` records decisions and locations:
-"Grid lives in src/maze.txt; 1 = wall." Status is the progress report; notes are not
-narration.
-
-## 8. Before ending a turn
-
-1. `taskmap check`. No leaf may stay in progress: finish it, `block` it with the reason,
-   or `reopen` it with a note on where you stopped.
-2. End the reply with one `Waiting on you: <question>` line per blocked node, or
-   `Waiting on you: nothing`.
-3. `taskmap note n0 "State: <where things are>. Next: <the suggested next step>. Waiting on you: <same list or nothing>."`
-   so the next session, or you after compaction, can resume from one line.
-
-## 9. Subagents
-
-The lead owns the tree shape. Hand a subagent node ids, not the whole map; it runs
-`taskmap start`, `note` and `done` on those ids only and never adds milestones or
-siblings. The lead verifies the work and marks the parent done. Subagents in git
-worktrees still find the map: taskmap looks in the main worktree.
-
-## 10. Token discipline
-
-- One `add --batch` beats ten `add` calls.
-- `tree --open` beats `tree --all`; `show <id>` only when you need a node's full text.
-- Do not re-read the map after every command; the command output already says what changed.
-- Reasons, notes and titles are one line each. Never paste `map.json` or `log.jsonl`.
-
-Other commands: `taskmap status` (one line), `taskmap open` (browser), `taskmap help`.
+One `add --batch`, not ten `add`s. `tree --open`, not `--all`; `show <id>` rarely. Never
+re-read the map after a command; never paste `map.json`. Notes and reasons are one line.
+Other commands: `status`, `next`, `check`, `help`.

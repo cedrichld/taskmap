@@ -55,10 +55,12 @@ You do not drive it. For any task that takes more than a few minutes Claude runs
 keeps statuses current as it goes. It prints the dashboard URL once. Type `/taskmap`
 to invoke it by hand.
 
-The plan is written for a reader who does not know the stack. Every node carries a
-title, what it produces, why it matters, and one observable check that says it is
-done — "the maze from the sketch is visible and the player cannot cross a wall",
-not "tests pass".
+The plan is written for a reader who does not know the stack. Every node has a short
+verb-first title; milestones and non-obvious leaves add one observable check that says
+they are done — "the maze from the sketch is visible and the player cannot cross a
+wall", not "tests pass". Longer text is reserved for nodes where Claude is thinking a
+problem through. Taskmap commands ride along in the same shell call as the real work,
+so the map costs a few percent of a session, not a fifth of it.
 
 Three levels below the root: milestones, chunks, steps. One leaf in progress at a
 time. Work Claude discovers becomes a node before it is done, dead ends become
@@ -126,9 +128,13 @@ Claude uses this; you can too.
 
 ```
 taskmap init "<name>" --goal "<one sentence>" [--track]
-taskmap add "<title>" --parent <id> [--what ..] [--why ..] [--done-when ..] [--link <id>].. [--after <id>]
-taskmap add --batch < items.json            # [{key, parent, title, what, why, done_when, links}]
-taskmap start|done|block|skip|reopen <id>   # done --note ".."; block/skip --reason ".."
+taskmap add "<title>" --parent <id> [--what ..] [--done-when ..] [--why ..] [--link <id>].. [--after <id>]
+taskmap add --batch < items.json            # [{key, parent, title, what?, done_when?, why?, links?}]
+taskmap start <id> [--note ".."]            # also starts its pending parents
+taskmap done <id> [--note ".."] [--next] [--state ".."]
+                                            # closes parents whose leaves are all done; --next starts the next
+                                            # leaf and prints it; --state notes where things stand on n0
+taskmap block|skip <id> --reason ".." | reopen <id> [--note ".."]
 taskmap edit <id> --title|--what|--why|--done-when|--parent|--order|--link|--unlink ..
 taskmap note <id> "<text>"
 taskmap tree [--open|--all] [--depth N]     # --open collapses finished subtrees

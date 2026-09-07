@@ -96,7 +96,18 @@ function projectSummary(p, { sessions = {}, clients = {} } = {}) {
     const map = store.readMap(p.path);
     const pr = store.progress(map);
     const ip = store.inProgressNodes(map);
+    const leaf = ip.find((n) => store.isLeaf(map, n.id)) || ip[0] || null;
+    const focus = leaf
+      ? {
+          id: leaf.id,
+          title: leaf.title,
+          path: store.ancestors(map, leaf.id).filter((a) => a !== map.root).map((a) => (map.nodes[a] || {}).title || a).reverse(),
+          note: leaf.notes && leaf.notes.length ? leaf.notes[leaf.notes.length - 1].text : '',
+          since: leaf.started_at || null,
+        }
+      : null;
     return {
+      focus,
       ...base,
       name: map.name || p.name,
       goal: map.goal || '',
