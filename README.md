@@ -97,10 +97,19 @@ The dashboard is not read-only. On any node you can:
 
 Unread messages stay highlighted until Claude has actually read them.
 
-The map is a constellation: the project in the middle, milestones around it, their
-tasks fanning outward, the task in progress glowing, a slow turn so the depth reads.
-Drag to turn it, scroll to zoom, `f` fits it to the window, `o` pauses the turn.
-**Outline** is the same tree as a list; the activity feed on the right shows every
+Four views of the same tree, on keys `1` to `4`:
+
+- **Map** (the default): cards in a tree, flat and easy to read.
+- **Graph**: orbs on a flat radial tree, the project in the middle and each level on
+  its own ring. Drag to move, scroll to zoom.
+- **3D**: the same orbs as a constellation in space over a grid floor that turns with
+  them, so you always know which way is down. Drag to turn, `o` pauses the slow turn.
+- **List**: an indented list.
+
+Click a task to open it in the side panel. If anything is folded under it, the click
+also opens that branch; click it again to fold it. The orb views name only the
+milestones, what Claude is on and what waits on you; hover an orb or zoom in for the
+rest. `f` fits any view to the window. The activity feed on the right shows every
 change with who made it.
 
 Three tabs decide what you look at. **Open** (the default) shows only what is not
@@ -119,7 +128,7 @@ taskmap share --stop   # ends it
 `share` opens a [Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)
 — no account, a random `trycloudflare.com` address — and prints the link with a QR
 code drawn in the terminal. Point a phone camera at it. Under 768 px the map opens as
-an outline, tapping a task raises a sheet with the message box one tap away, and the
+a list, tapping a task raises a sheet with the message box one tap away, and the
 overview cards stack. `cloudflared` has to be installed; `share` tells you where to
 get it if it is not.
 
@@ -200,11 +209,11 @@ want. They are gitignored, so `git status` will not remind you.
 
 ```bash
 bash tests/smoke.sh          # temp project, isolated home, its own port
-node --test tests/ui.test.js # scope filter, done list, 3D layout, fit, title placement
+node --test tests/ui.test.js # scope filter, click rule, done list, 3D and flat layouts, fit, title placement
 claude plugin validate .     # manifest and hook schema
 node tests/gen40.js <dir>    # a 40-node map for layout checks
 python3 tests/qr-verify.py   # decodes src/qr.js output with OpenCV (skips if absent)
-node tests/shots.js <projectId|/path> 1440x900 out.png [select=n10] [view=outline] [scope=done] [mobile=1] [interact=1]
+node tests/shots.js <projectId|/path> 1440x900 out.png [select=n10] [view=map|graph|orbs|outline] [scope=done] [mobile=1] [interact=1] [click=n4]
 scripts/install-skills.sh <checkout>   # third-party design skills, not tracked here
 ```
 

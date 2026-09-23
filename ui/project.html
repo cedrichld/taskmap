@@ -29,11 +29,13 @@
       <button type="button" data-scope="all" aria-pressed="false" title="The whole map">All</button>
     </div>
     <div class="seg" role="group" aria-label="View">
-      <button type="button" data-view="graph" aria-pressed="true">Graph</button>
-      <button type="button" data-view="outline" aria-pressed="false">Outline</button>
+      <button type="button" data-view="map" aria-pressed="true" title="The tree as cards, flat and easy to read">Map</button>
+      <button type="button" data-view="graph" aria-pressed="false" title="The tree as orbs on a flat radial graph">Graph</button>
+      <button type="button" data-view="orbs" aria-pressed="false" title="The tree as orbs in 3D; drag to turn it">3D</button>
+      <button type="button" data-view="outline" aria-pressed="false" title="The tree as an indented list">List</button>
     </div>
     <button type="button" id="fit-btn" title="Fit the map to the window (f)">Fit</button>
-    <button type="button" id="add-top-btn" class="primary" aria-expanded="false"><span class="wide-only">Add high-level task</span><span class="narrow-only">Add task</span></button>
+    <button type="button" id="add-top-btn" class="primary" aria-expanded="false" title="Add a high-level task to the map">Add task</button>
   </div>
   <form id="add-form" class="add-form" hidden>
     <input id="add-title" placeholder="Title" maxlength="200" autocomplete="off" required>
@@ -52,9 +54,25 @@
 
 <div id="body">
   <div id="sheet-backdrop" class="sheet-backdrop"></div>
-  <main id="main" class="view-graph">
+  <main id="main" class="view-map">
     <div id="notice" class="notice" hidden></div>
-    <div id="graph" role="img" aria-label="Task map, a constellation of orbs">
+    <svg id="cardmap" role="img" aria-label="Task map as a tree of cards">
+      <defs>
+        <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0.5 L7,4 L0,7.5 Z"></path>
+        </marker>
+        <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+          <circle cx="1" cy="1" r="1"></circle>
+        </pattern>
+      </defs>
+      <rect id="grid" x="0" y="0" width="100%" height="100%" fill="url(#dots)"></rect>
+      <g id="viewport">
+        <g id="edges"></g>
+        <g id="xlinks"></g>
+        <g id="nodes"></g>
+      </g>
+    </svg>
+    <div id="graph" role="img" aria-label="Task map as orbs">
       <canvas id="scene"></canvas>
       <div id="labels"></div>
     </div>
@@ -72,7 +90,7 @@
     </div>
     <section id="panel">
       <div id="panel-content" class="panel-content">
-        <div class="placeholder">Pick an orb to see its details.</div>
+        <div class="placeholder">Pick a task to see its details.</div>
       </div>
       <div id="panel-actions" class="panel-actions" hidden>
         <label class="k" for="fb-text">Message Claude about this task</label>

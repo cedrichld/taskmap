@@ -132,3 +132,77 @@ test('the exact fit keeps every orb, margin included, inside the frame at every 
     }
   }
 });
+
+test('an expanded node shows its finished children in the open scope', () => {
+  const map = fixture();
+  const kids = C.index(map);
+  const tree = C.visibleTree(map, kids, { scope: 'open', expanded: new Set(['n4']) });
+  assert.deepEqual(ids(tree), ['n0', 'n4', 'n5', 'n6', 'n7', 'n8', 'n9']);
+  const m = C.flatten(tree).find((it) => it.id === 'n4');
+  assert.equal(m.hidden, 0);
+  const root = C.visibleTree(map, kids, { scope: 'open', expanded: new Set(['n0']) });
+  const n1 = C.flatten(root).find((it) => it.id === 'n1');
+  assert.ok(n1, 'the finished milestone shows once the root is opened');
+  assert.equal(n1.hidden, 2, 'its own finished leaves stay folded until it is opened too');
+});
+
+test('the root cannot be folded away', () => {
+  const map = fixture();
+  const tree = C.visibleTree(map, C.index(map), { scope: 'all', collapsed: new Set(['n0']) });
+  assert.equal(tree.collapsed, false);
+  assert.ok(tree.children.length > 0);
+});
+
+test('one click opens whatever is hidden, folds the selected open node, else selects', () => {
+  const map = fixture();
+  const kids = C.index(map);
+  const find = (tree, id) => C.flatten(tree).find((it) => it.id === id);
+  const folded = C.visibleTree(map, kids, { scope: 'all', collapsed: new Set(['n1']) });
+  assert.equal(C.clickAction(find(folded, 'n1'), null), 'reveal');
+  assert.equal(C.clickAction(find(folded, 'n1'), 'n1'), 'reveal');
+  const open = C.visibleTree(map, kids, { scope: 'open' });
+  assert.equal(C.clickAction(find(open, 'n4'), null), 'reveal', 'n4 has a finished leaf hidden by the scope');
+  const all = C.visibleTree(map, kids, { scope: 'all' });
+  assert.equal(C.clickAction(find(all, 'n4'), null), 'select');
+  assert.equal(C.clickAction(find(all, 'n4'), 'n4'), 'fold');
+  assert.equal(C.clickAction(find(all, 'n9'), 'n9'), 'select', 'a leaf only selects');
+  assert.equal(C.clickAction(all, 'n0'), 'select', 'the root never folds');
+  const opened = C.visibleTree(map, kids, { scope: 'open', expanded: new Set(['n0']) });
+  assert.equal(C.clickAction(opened, 'n0'), 'fold', 'an opened root drops back to the scope');
+});
+
+test('the flat layout is a radial tree: root in the middle, first milestone on top, no orb on another', () => {
+  const map = fixture();
+  const tree = C.visibleTree(map, C.index(map), { scope: 'all' });
+  const items = C.layoutFlat(tree);
+  const at = new Map(items.map((it) => [it.id, it]));
+  assert.equal(at.get('n0').x, 0);
+  assert.equal(at.get('n0').y, 0);
+  assert.ok(items.every((it) => it.z === 0));
+  assert.ok(Math.abs(at.get('n1').x) < 1e-6 && at.get('n1').y > 0, 'first milestone straight up');
+  for (const a of items) {
+    for (const b of items) {
+      if (a === b) continue;
+      assert.ok(Math.hypot(a.x - b.x, a.y - b.y) >= a.r + b.r + 4, `${a.id} touches ${b.id}`);
+    }
+    if (a.parent) assert.ok(Math.hypot(a.x, a.y) > Math.hypot(at.get(a.parent.id).x, at.get(a.parent.id).y), `${a.id} is not outside its parent`);
+  }
+  assert.ok(tree.rings.length >= 4 && tree.rings[1] < tree.rings[2]);
+  const f = C.fitFlat(items.map((it) => ({ x: it.x, y: it.y, m: it.r })), 900, 800, 600);
+  const k = 900 / f.dist;
+  for (const it of items) {
+    const sx = 400 + (it.x - f.x) * k; const sy = 300 - (it.y - f.y) * k;
+    assert.ok(sx >= -0.5 && sx <= 800.5 && sy >= -0.5 && sy <= 600.5, `${it.id} lands off the frame`);
+  }
+});
+
+test('the floor grid lies flat under the cloud and fades to its rim', () => {
+  const g = C.floorGrid(300);
+  assert.ok(g.y < -300);
+  assert.ok(g.segs.length > 20);
+  for (const s of g.segs) {
+    assert.equal(s.a.y, g.y); assert.equal(s.b.y, g.y);
+    assert.ok(Math.hypot(s.a.x, s.a.z) <= g.disc + 1e-6 && Math.hypot(s.b.x, s.b.z) <= g.disc + 1e-6);
+    assert.ok(s.w >= 0 && s.w <= 1.6);
+  }
+});

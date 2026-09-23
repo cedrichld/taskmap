@@ -71,7 +71,7 @@ The map is read in three scopes, chosen in the header and remembered per project
 | **Done** | a flat list of finished and dropped tasks, newest first, grouped by day, each with its milestone › chunk path, finish time and last note | the archive, one place, chronological |
 | **All** | the whole tree; finished leaves become small quiet orbs | structure and history together |
 
-Open and All feed both the graph and the outline. A parent keeps its `done/total`
+Open and All feed the Map, Graph, 3D and List views alike. A parent keeps its `done/total`
 pill in every scope, so a milestone with hidden finished leaves still says how far it
 is. The Done tab shows a count beside its name; so does Open.
 
@@ -109,16 +109,24 @@ rasterised once per colour and size and blitted.
   and a dashed outline on the label. **Unread feedback** is an accent dot at the orb's
   top-right.
 - **Titles** sit 7 px beside their orb on a 62 % black pill: 12 px/450 for leaves,
-  13 px/600 for hubs, 15 px/600 for the root, a count pill after the title. A blocked
-  title grows its question in `--warn` on two clamped lines. The in-progress leaf's
-  title takes an accent-tinted pill; the selected one a `--text` inset ring.
-- **Which titles show**: every hub and every open leaf asks for its title; finished
-  leaves only when they are drawn at 5 px or more, or hovered, or selected. Each
-  title has four candidate spots (right, left, below, above) and is placed in the
-  first that does not overlap a title already placed; the order is the current task
-  (always first), selected, hovered, in-progress and blocked leaves, hubs in progress,
-  root, milestones, chunks, then open leaves, then finished ones. A title that was
+  13 px/600 for hubs, 15 px/600 for the root. The only thing after a title is a `+N`
+  pill in an accent wash when N tasks are folded under it (the orb itself gets a
+  dotted ring 4.5 px out). A blocked title is a warm pill; its question lives in the
+  Waiting strip, not on the map. The in-progress leaf's title takes an accent-tinted
+  pill; the selected one a `--text` inset ring.
+- **Which titles show**: few, on purpose. Always: the root, open milestones, the task
+  in progress, anything blocked, and whatever is hovered or selected. Finished
+  milestones in Graph (where there is room) but not in 3D. Everything else only once
+  the view is zoomed in on it (scale 1.1 for open chunks, 1.3 for open leaves, 1.6 to
+  2.4 for finished work). Each title tries the side away from the root first, then
+  right, left, below, above, and takes the first spot that covers neither a title
+  already placed nor another orb; the order is the current task, selected, hovered,
+  blocked, in-progress hubs, root, milestones, chunks, then leaves. A title that was
   visible last frame gets a small bonus so the set does not flicker as the map turns.
+- **Ground**: in 3D a square grid on a disc just below the cloud, fading to a rim,
+  with a dashed stem from the root to its centre, all in `--text` at up to 15 %. It
+  turns and tilts with the orbs, so orientation is always readable. In Graph a faint
+  ring per level around the root instead.
 
 ## 5. Layout: a dandelion
 

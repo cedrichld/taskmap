@@ -1,5 +1,5 @@
 'use strict';
-/* taskmap dashboard — vanilla JS, vendored D3 v7 for the outline, ui/constellation.js for the 3D map.
+/* taskmap dashboard — vanilla JS, vendored D3 v7 for the card map and the list, ui/constellation.js for the orbs.
    Contract: docs/SPEC.md sections 2, 6, 7. Design: docs/design/DESIGN.md. */
 
 // ---------- helpers ----------
@@ -81,7 +81,7 @@ async function api(method, path, body) {
 // ---------- state ----------
 const state = {
   projects: [], pid: null, map: null, log: [], kids: new Map(),
-  selected: null, hover: null, collapsed: new Set(), view: 'graph', scope: 'open',
+  selected: null, hover: null, collapsed: new Set(), expanded: new Set(), view: 'map', scope: 'open',
   es: null, retryMs: 1000, retryTimer: null, everConnected: false,
   userMoved: false, drafts: {}, inlineMode: null, orbit: true,
 };
@@ -156,20 +156,22 @@ function ancestorsOf(id) {
   for (let n = nodeOf(id); n; n = n.parent != null ? nodeOf(n.parent) : null) out.add(n.id);
   return out;
 }
-const visibleTree = () => C.visibleTree(state.map, state.kids, { scope: state.scope === 'done' ? 'all' : state.scope, collapsed: state.collapsed });
+const visibleTree = () => C.visibleTree(state.map, state.kids, { scope: state.scope === 'done' ? 'all' : state.scope, collapsed: state.collapsed, expanded: state.expanded });
+const VIEWS = ['map', 'graph', 'orbs', 'outline'];
 
-// ---------- cards (outline) and labels (graph) ----------
+// ---------- cards (map and list) ----------
 function kindOf(id) { return id === rootId() ? 'root' : hasKids(id) ? 'parent' : 'leaf'; }
 // The card and the strip show the question itself; the panel keeps the full reason.
 const question = (reason) => String(reason || '').replace(/^waiting on (you|the user|user)[:,]?\s*/i, '');
-function badgeHtml(id, collapsed) {
+function badgeHtml(id, collapsed, hidden) {
   const p = progressOf(id);
+  const more = hidden ? ` ${hidden} ${hidden === 1 ? 'task is' : 'tasks are'} hidden.` : '';
   return collapsed
-    ? `<span class="badge fold" title="${p.done} of ${p.total} leaves done. Click to unfold.">${p.done}/${p.total}${icon('chevron')}</span>`
+    ? `<span class="badge fold" title="${p.done} of ${p.total} leaves done.${more} Click to show them.">${p.done}/${p.total}${icon('chevron')}</span>`
     : `<span class="badge" title="${p.done} of ${p.total} leaves done. Click to fold.">${p.done}/${p.total}</span>`;
 }
 function cardHtml(n, opts) {
-  const badge = kindOf(n.id) !== 'leaf' ? badgeHtml(n.id, opts.collapsed) : '';
+  const badge = kindOf(n.id) !== 'leaf' ? badgeHtml(n.id, opts.collapsed, opts.hidden) : '';
   const reason = n.status === 'blocked' ? `<div class="reason">${esc(question(n.status_reason))}</div>` : '';
   const status = opts.status ? `<span class="status">${LABEL[n.status] || esc(n.status)}</span>` : '';
   const unread = unreadOf(n) ? `<i class="unread" title="${unreadOf(n)} unread feedback"></i>` : '';
@@ -190,9 +192,11 @@ function syncCard(el, n, opts) {
   if (el._sig !== html) { el.innerHTML = html; el._sig = html; }
 }
 
-// ---------- constellation: the graph view ----------
-// Orbs on a canvas, laid out in 3D by ui/constellation.js; titles are HTML so they stay
-// crisp at any zoom. The camera orbits the root; the loop only runs while something moves.
+// ---------- orbs: the Graph and 3D views ----------
+// Orbs on a canvas; titles are HTML so they stay crisp at any zoom. Graph lays the tree
+// flat as a radial tree and pans; 3D lays it out as a dandelion (ui/constellation.js),
+// orbits the root and turns over a floor grid. Switching between the two morphs one
+// layout into the other. The loop only runs while something moves.
 const graphEl = $('#graph');
 const canvas = $('#scene');
 const ctx = canvas.getContext('2d');
@@ -205,19 +209,28 @@ function mix(hex, toWhite, t) {
   const tgt = toWhite ? 255 : 0;
   return `rgb(${hexParts(hex).map((c) => Math.round(c + (tgt - c) * t)).join(',')})`;
 }
+const PITCH_3D = 0.38;
 const scene = {
-  entries: new Map(), cam: { yaw: 0.55, pitch: 0.38, dist: 1400, focal: 900 }, want: { dist: 1400, pitch: 0.38 },
+  entries: new Map(),
+  cam: { yaw: 0.55, pitch: PITCH_3D, dist: 1400, focal: 900, panX: 0, panY: 0 },
+  want: { dist: 1400, pitch: PITCH_3D, yaw: null, panX: 0, panY: 0 },
+  flat: 0, wantFlat: 0, rings: [], floor: null, floorR: 0,
   R: 200, starR: 0, stars: [], nowId: null, nowPath: new Set(), frame: { cx: 0, cy: 0, w: 0, h: 0 },
   dpr: 1, w: 0, h: 0, raf: 0, on: false, last: 0, lastDraw: 0, quiet: 0, dirty: true, sig: null, sprites: new Map(),
 };
-const ptr = { active: new Map(), moved: false, x0: 0, y0: 0, yaw0: 0, pitch0: 0, hit: null, badge: false, pinch0: 0, dist0: 0 };
+const ptr = { active: new Map(), moved: false, x0: 0, y0: 0, yaw0: 0, pitch0: 0, panX0: 0, panY0: 0, hit: null, badge: false, pinch0: 0, dist0: 0 };
+const orbView = () => state.view === 'graph' || state.view === 'orbs';
+const flatView = () => state.view === 'graph';
 
+// A pill after the title says how many tasks sit folded under it; clicking opens them.
+function moreHtml(it) {
+  if (!it.hidden) return '';
+  return `<span class="badge more" title="${it.hidden} hidden ${it.hidden === 1 ? 'task' : 'tasks'} under this one. Click to show.">+${it.hidden}</span>`;
+}
 function labelHtml(it) {
   const n = it.n;
-  const badge = it.kind !== 'leaf' ? badgeHtml(it.id, it.collapsed) : '';
-  const reason = n.status === 'blocked' ? `<span class="reason">${esc(question(n.status_reason))}</span>` : '';
   const unread = unreadOf(n) ? `<i class="unread" title="${unreadOf(n)} unread feedback"></i>` : '';
-  return `<span class="title">${esc(n.title)}</span>${reason}${badge}${unread}`;
+  return `<span class="title">${esc(n.title)}</span>${moreHtml(it)}${unread}`;
 }
 function syncLabel(e) {
   const it = e.it;
@@ -228,7 +241,7 @@ function syncLabel(e) {
     e.el.style.pointerEvents = 'none';
     labelsEl.appendChild(e.el);
   }
-  const cls = `label k-${it.kind} st-${it.n.status}${it.collapsed ? ' collapsed' : ''}${it.n.source === 'user' ? ' user' : ''}${it.id === state.selected ? ' selected' : ''}`;
+  const cls = `label k-${it.kind} st-${it.n.status}${it.hidden ? ' folded' : ''}${it.n.source === 'user' ? ' user' : ''}${it.id === state.selected ? ' selected' : ''}`;
   if (e.el.className !== cls) { e.el.className = cls; e.lw = 0; }
   const html = labelHtml(it);
   if (e.sig !== html) { e.el.innerHTML = html; e.sig = html; e.el.title = cardTitle(it.n); e.lw = 0; }
@@ -242,8 +255,11 @@ function resetScene() {
 }
 function renderGraph() {
   if (scene.w !== graphEl.clientWidth || scene.h !== graphEl.clientHeight) resizeCanvas();
+  const flat = flatView();
+  scene.wantFlat = flat ? 1 : 0;
   const tree = visibleTree();
-  const items = C.layout(tree);
+  const items = flat ? C.layoutFlat(tree) : C.layout(tree);
+  scene.rings = flat ? tree.rings || [] : scene.rings;
   const first = !scene.entries.size;
   const seen = new Set();
   for (const it of items) {
@@ -260,12 +276,13 @@ function renderGraph() {
     syncLabel(e);
   }
   for (const e of scene.entries.values()) if (!seen.has(e.id)) { e.ta = 0; e.gone = true; }
+  if (first || REDUCED) scene.flat = scene.wantFlat;
   scene.R = C.cloudRadius(items);
   if (Math.abs(scene.R - scene.starR) > scene.starR * 0.25) { scene.starR = scene.R; scene.stars = C.stars(220, scene.R * 2.4); }
   const now = nowNode();
   scene.nowId = now ? now.id : null;
   scene.nowPath = now ? ancestorsOf(now.id) : new Set();
-  const sig = items.map((it) => it.id).join(',');
+  const sig = `${state.view}|${items.map((it) => it.id).join(',')}`;
   const structural = sig !== scene.sig;
   scene.sig = sig;
   $('#allopen').hidden = !(state.scope === 'open' && !tree.children.length);
@@ -274,7 +291,7 @@ function renderGraph() {
 }
 function wake() {
   scene.dirty = true;
-  if (scene.on || document.hidden) return;
+  if (scene.on || document.hidden || !orbView()) return;
   scene.on = true;
   scene.last = performance.now();
   scene.raf = requestAnimationFrame(tick);
@@ -283,19 +300,30 @@ function stopScene() {
   scene.on = false;
   cancelAnimationFrame(scene.raf);
 }
+// Eases `cur[k]` toward `want[k]`; true while it still has a way to go.
+function ease(cur, want, k, f, eps) {
+  if (Math.abs(want[k] - cur[k]) > eps) { cur[k] += (want[k] - cur[k]) * f; return true; }
+  cur[k] = want[k];
+  return false;
+}
 function tick(t) {
   if (!scene.on) return;
   if (scene.w < 20 || scene.h < 20) { scene.on = false; return; }
   const dt = Math.min(64, t - scene.last);
   scene.last = t;
   const cam = scene.cam;
+  const want = scene.want;
   let moving = false;
   const kc = REDUCED ? 1 : 1 - Math.exp(-dt / 150);
-  if (Math.abs(scene.want.dist - cam.dist) > 0.5) { cam.dist += (scene.want.dist - cam.dist) * kc; moving = true; } else cam.dist = scene.want.dist;
-  if (Math.abs(scene.want.pitch - cam.pitch) > 0.0005) { cam.pitch += (scene.want.pitch - cam.pitch) * kc; moving = true; } else cam.pitch = scene.want.pitch;
+  if (ease(cam, want, 'dist', kc, 0.5)) moving = true;
+  if (ease(cam, want, 'pitch', kc, 0.0005)) moving = true;
+  if (ease(cam, want, 'panX', kc, 0.3)) moving = true;
+  if (ease(cam, want, 'panY', kc, 0.3)) moving = true;
+  if (want.yaw != null && ease(cam, want, 'yaw', kc, 0.0005)) moving = true;
+  if (ease(scene, { flat: scene.wantFlat }, 'flat', kc, 0.002)) moving = true;
   // The slow orbit waits a few seconds after the last touch and never runs under a pointer.
   const idle = t - scene.quiet > 5000 && !state.hover && !ptr.active.size;
-  if (state.orbit && idle && !REDUCED) { cam.yaw += dt * 0.00005; moving = true; }
+  if (state.orbit && idle && !REDUCED && !flatView()) { cam.yaw += dt * 0.00005; moving = true; }
   const kp = REDUCED ? 1 : 1 - Math.exp(-dt / 170);
   let pulses = false;
   for (const e of [...scene.entries.values()]) {
@@ -315,24 +343,83 @@ function tick(t) {
   if ((moving || pulses) && !document.hidden) scene.raf = requestAnimationFrame(tick);
   else scene.on = false;
 }
+// Far orbs dim in 3D; a flat drawing has no far side.
 function fog(depth) {
   const near = scene.cam.dist - scene.R;
   const t = clamp((depth - near) / (2 * scene.R || 1), 0, 1);
-  return 1 - 0.5 * t;
+  return 1 - 0.5 * t * (1 - scene.flat);
+}
+// Strokes world-space segments in a few alpha buckets, so a grid costs a handful of paths.
+function strokeSegments(segs, cam, cx, cy, color, alpha, width) {
+  const buckets = [[], [], [], [], [], [], []];
+  for (const s of segs) {
+    const p = C.project(s.a, cam, cx, cy);
+    const q = C.project(s.b, cam, cx, cy);
+    if (p.depth <= 30 || q.depth <= 30) continue;
+    const w = s.w * fog((p.depth + q.depth) / 2);
+    const b = Math.min(6, Math.round(w * 4));
+    if (b > 0) buckets[b].push(p.x, p.y, q.x, q.y);
+  }
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  buckets.forEach((arr, b) => {
+    if (!arr.length) return;
+    ctx.globalAlpha = alpha * (b / 4);
+    ctx.beginPath();
+    for (let i = 0; i < arr.length; i += 4) { ctx.moveTo(arr[i], arr[i + 1]); ctx.lineTo(arr[i + 2], arr[i + 3]); }
+    ctx.stroke();
+  });
+}
+// The ground the orbs stand on. In 3D a grid floor under the cloud, with a stem down
+// from the root, turns and tilts with the orbs; in Graph faint rings mark each level.
+function drawBackdrop(cam, cx, cy) {
+  const a3 = 1 - scene.flat;
+  if (a3 > 0.02) {
+    if (!scene.floor || Math.abs(scene.floorR - scene.R) > scene.floorR * 0.08) { scene.floor = C.floorGrid(scene.R); scene.floorR = scene.R; }
+    strokeSegments(scene.floor.segs, cam, cx, cy, P.text, 0.15 * a3, 1);
+    const top = C.project({ x: 0, y: 0, z: 0 }, cam, cx, cy);
+    const foot = C.project({ x: 0, y: scene.floor.y, z: 0 }, cam, cx, cy);
+    if (top.depth > 30 && foot.depth > 30) {
+      ctx.setLineDash([2, 5]);
+      ctx.globalAlpha = 0.22 * a3;
+      ctx.strokeStyle = P.text;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(top.x, top.y); ctx.lineTo(foot.x, foot.y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 0.35 * a3;
+      ctx.fillStyle = P.text;
+      ctx.beginPath(); ctx.ellipse(foot.x, foot.y, 3, 3 * Math.abs(Math.sin(cam.pitch)) + 0.5, 0, 0, TAU); ctx.fill();
+    }
+  }
+  const af = scene.flat;
+  if (af > 0.02 && scene.rings.length > 1) {
+    const segs = [];
+    for (let d = 1; d < scene.rings.length; d++) {
+      const r = scene.rings[d];
+      for (let i = 0; i < 120; i++) {
+        const t0 = (i / 120) * TAU; const t1 = ((i + 1) / 120) * TAU;
+        segs.push({ a: { x: r * Math.cos(t0), y: r * Math.sin(t0), z: 0 }, b: { x: r * Math.cos(t1), y: r * Math.sin(t1), z: 0 }, w: 1 });
+      }
+    }
+    strokeSegments(segs, cam, cx, cy, P.text, 0.075 * af, 1);
+  }
 }
 function draw(t) {
-  const { cx, cy } = scene.frame;
   const cam = scene.cam;
+  const cx = scene.frame.cx + cam.panX;
+  const cy = scene.frame.cy + cam.panY;
   ctx.setTransform(scene.dpr, 0, 0, scene.dpr, 0, 0);
   ctx.clearRect(0, 0, scene.w, scene.h);
-  // Faint stars far behind the cloud: they turn with it, which is what makes the depth read.
+  // Faint stars far behind the cloud: they turn with it in 3D and fade in the flat graph.
+  const starA = 1 - 0.75 * scene.flat;
   ctx.fillStyle = P.text;
   for (const st of scene.stars) {
     const q = C.project(st, cam, cx, cy);
     if (q.depth <= 40) continue;
-    ctx.globalAlpha = st.a * 0.55 * fog(q.depth);
+    ctx.globalAlpha = st.a * 0.55 * fog(q.depth) * starA;
     ctx.beginPath(); ctx.arc(q.x, q.y, st.r * clamp(q.s * 1.4, 0.5, 1.4), 0, TAU); ctx.fill();
   }
+  drawBackdrop(cam, cx, cy);
   // A faint pool of light around the root, so the cloud sits in space rather than on flat black.
   const root = scene.entries.get(rootId());
   if (root && root.a > 0.2) {
@@ -385,7 +472,7 @@ function draw(t) {
   }
   for (const e of list) drawOrb(e, t);
   ctx.globalAlpha = 1;
-  layoutLabels(list);
+  layoutLabels(list, root);
 }
 function orbStyle(e) {
   const st = e.it.n.status;
@@ -476,6 +563,8 @@ function drawOrb(e, t) {
     ctx.drawImage(gs.c, e.sx - gs.half, e.sy - gs.half, gs.half * 2, gs.half * 2);
     ctx.globalCompositeOperation = 'source-over';
   }
+  // Something folded inside: a second, dotted ring says there is more to open.
+  if (e.it.hidden) { ctx.setLineDash([2, 3]); ring(e.sx, e.sy, px + 4.5, P.text, 1, a * 0.45); ctx.setLineDash([]); }
   const sp = orbSprite(st, px);
   ctx.globalAlpha = a;
   ctx.drawImage(sp.c, e.sx - sp.half, e.sy - sp.half, sp.half * 2, sp.half * 2);
@@ -493,23 +582,30 @@ function hideLabel(e) {
   e.el.style.opacity = '0';
   e.el.style.pointerEvents = 'none';
 }
-// Every orb that matters asks for its title; overlapping titles yield to the more important one.
-function layoutLabels(list) {
+// Few titles by default: the root, the open milestones, what Claude is on, what waits
+// on you, and whatever is under the pointer or selected. The flat graph also names
+// finished milestones where there is room; zooming in brings the leaves back.
+function labelWish(e) {
+  const it = e.it;
+  const st = it.n.status;
+  const shut = C.closed(st);
+  const bump = st === 'in_progress' ? 25 : st === 'blocked' ? 22 : 0;
+  const z = e.s; // how far in the view is zoomed at this orb: 1 is life size
+  if (it.kind === 'root') return { want: true, p: 60 };
+  if (scene.nowId === e.id) return { want: true, p: 90 };
+  if (st === 'blocked') return { want: true, p: 70 };
+  if (it.depth === 1) return shut ? { want: flatView() || z >= 2.4, p: 30 } : { want: true, p: 50 + bump };
+  if (it.kind === 'parent') return { want: bump > 0 || z >= (shut ? 1.6 : 1.1), p: 35 + bump };
+  if (st === 'in_progress') return { want: true, p: 80 };
+  return { want: z >= (shut ? 1.7 : 1.3), p: shut ? 5 : 20 };
+}
+function layoutLabels(list, root) {
   const rects = [];
   const es = [];
   const far = scene.cam.dist + scene.R;
   for (const e of list) {
     const it = e.it;
-    const st = it.n.status;
-    let want;
-    let p;
-    if (it.kind === 'root') { want = true; p = 60; }
-    else if (it.kind === 'parent') { want = true; p = (it.depth === 1 ? 50 : it.depth === 2 ? 40 : 35) + (st === 'in_progress' ? 25 : st === 'blocked' ? 22 : 0); }
-    else if (st === 'in_progress') { want = true; p = 80; }
-    else if (st === 'blocked') { want = true; p = 70; }
-    else if (!C.closed(st)) { want = e.px >= 2.5; p = 20; }
-    else { want = e.px >= 5; p = 5; }
-    if (scene.nowId === e.id) { want = true; p = 90; }
+    let { want, p } = labelWish(e);
     if (e.id === state.selected) { want = true; p += 50; }
     if (e.id === state.hover) { want = true; p += 40; }
     if (e.shown) p += 6;
@@ -517,16 +613,22 @@ function layoutLabels(list) {
     if (!want || e.a < 0.35 || e.gone) { hideLabel(e); continue; }
     if (!e.lw) { e.lw = e.el.offsetWidth || 1; e.lh = e.el.offsetHeight || 16; }
     const w = e.lw; const h = e.lh; const gap = e.px + 7;
-    rects.push({ p, cands: [
-      { x: e.sx + gap, y: e.sy - h / 2, w, h },
-      { x: e.sx - gap - w, y: e.sy - h / 2, w, h },
-      { x: e.sx - w / 2, y: e.sy + gap, w, h },
-      { x: e.sx - w / 2, y: e.sy - gap - h, w, h },
-    ] });
+    const right = { x: e.sx + gap, y: e.sy - h / 2, w, h };
+    const left = { x: e.sx - gap - w, y: e.sy - h / 2, w, h };
+    const below = { x: e.sx - w / 2, y: e.sy + gap, w, h };
+    const above = { x: e.sx - w / 2, y: e.sy - gap - h, w, h };
+    // Titles hang on the side away from the root, so they point outward like the branches.
+    const dx = root ? e.sx - root.sx : 1;
+    const dy = root ? e.sy - root.sy : 0;
+    let first = dx >= 0 ? right : left;
+    if (it.kind !== 'root' && Math.abs(dx) < 0.4 * Math.hypot(dx, dy)) first = dy < 0 ? above : below;
+    rects.push({ p, soft: p >= 50, cands: [first, right, left, below, above].filter((r, i, a) => a.indexOf(r) === i) });
     es.push(e);
   }
   for (const e of scene.entries.values()) if (!list.includes(e)) hideLabel(e);
-  const chosen = C.placeLabels(rects);
+  // The orbs themselves are obstacles: a title may not sit on top of someone else's orb.
+  const orbs = list.filter((e) => e.a > 0.35 && !e.gone).map((e) => ({ x: e.sx - e.px, y: e.sy - e.px, w: e.px * 2, h: e.px * 2 }));
+  const chosen = C.placeLabels(rects, orbs);
   es.forEach((e, i) => {
     if (chosen[i] < 0) { hideLabel(e); return; }
     const r = rects[i].cands[chosen[i]];
@@ -577,20 +679,40 @@ function frame() {
   return scene.frame;
 }
 const distRange = () => [Math.max(60, scene.R * 0.15), scene.R * 8 + 400];
-// Fit the cloud in the free area (load, structural change, Fit button, f). Titles hang
-// to the right of their orbs, so the frame keeps room on that side.
-function fit(animate) {
-  if (state.view !== 'graph' || state.scope === 'done' || !scene.entries.size) return;
+// Fit the orbs in the free area (load, structural change, Fit button, f). Titles hang
+// beside their orbs, so the frame keeps room for them.
+function fitOrbs(animate) {
+  if (!orbView() || state.scope === 'done' || !scene.entries.size) return;
   const f = frame();
-  scene.want.pitch = 0.38;
+  const want = scene.want;
   const pts = [];
   for (const e of scene.entries.values()) if (!e.gone) pts.push({ x: e.tx, y: e.ty, z: e.tz, m: e.tr * 2.2 });
-  const room = Math.min(300, f.w * 0.36); // titles hang beside their orbs
-  const d = C.fitDistanceFor(pts, { yaw: scene.cam.yaw, pitch: scene.want.pitch, focal: scene.cam.focal }, Math.max(120, f.w - room), Math.max(120, f.h - 50));
+  // Titles hang outward on both sides of the flat graph, on the right in 3D.
+  const room = flatView() ? Math.min(480, f.w * 0.44) : Math.min(300, f.w * 0.36);
   const [lo, hi] = distRange();
-  // A near-empty map is not an excuse to fill the screen with one orb: 1.5x is the closest a fit goes.
-  scene.want.dist = clamp(Math.max(d, scene.cam.focal / 1.5), lo, hi);
-  if (!animate || REDUCED) { scene.cam.dist = scene.want.dist; scene.cam.pitch = scene.want.pitch; }
+  if (flatView()) {
+    // Square to the screen: yaw back to the nearest whole turn, no tilt, centred by panning.
+    const r = C.fitFlat(pts, scene.cam.focal, Math.max(120, f.w - room), Math.max(120, f.h - 40));
+    want.dist = clamp(Math.max(r.dist, scene.cam.focal / 1.5), lo, hi);
+    const k = scene.cam.focal / want.dist;
+    want.pitch = 0;
+    want.yaw = Math.round(scene.cam.yaw / TAU) * TAU;
+    want.panX = -r.x * k;
+    want.panY = r.y * k;
+  } else {
+    want.pitch = PITCH_3D;
+    want.yaw = null;
+    want.panX = 0;
+    want.panY = 0;
+    const d = C.fitDistanceFor(pts, { yaw: scene.cam.yaw, pitch: want.pitch, focal: scene.cam.focal }, Math.max(120, f.w - room), Math.max(120, f.h - 50));
+    // A near-empty map is not an excuse to fill the screen with one orb: 1.5x is the closest a fit goes.
+    want.dist = clamp(Math.max(d, scene.cam.focal / 1.5), lo, hi);
+  }
+  if (!animate || REDUCED) {
+    const cam = scene.cam;
+    cam.dist = want.dist; cam.pitch = want.pitch; cam.panX = want.panX; cam.panY = want.panY;
+    if (want.yaw != null) cam.yaw = want.yaw;
+  }
   state.userMoved = false;
   wake();
 }
@@ -604,6 +726,22 @@ function setHover(id) {
   graphEl.classList.toggle('over', Boolean(id));
   wake();
 }
+// Zoom to `dist`; in the flat graph the point under (x, y) stays where it is.
+function zoomTo(dist, x, y) {
+  const cam = scene.cam;
+  const [lo, hi] = distRange();
+  const d = clamp(dist, lo, hi);
+  if (flatView() && x != null) {
+    const r = graphEl.getBoundingClientRect();
+    const ox = x - r.left - scene.frame.cx;
+    const oy = y - r.top - scene.frame.cy;
+    const f = cam.dist / d;
+    cam.panX = scene.want.panX = ox - (ox - cam.panX) * f;
+    cam.panY = scene.want.panY = oy - (oy - cam.panY) * f;
+  }
+  cam.dist = scene.want.dist = d;
+  state.userMoved = true;
+}
 function bindGraph() {
   graphEl.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -612,6 +750,7 @@ function bindGraph() {
     if (ptr.active.size === 1) {
       ptr.moved = false;
       ptr.x0 = e.clientX; ptr.y0 = e.clientY; ptr.yaw0 = scene.cam.yaw; ptr.pitch0 = scene.cam.pitch;
+      ptr.panX0 = scene.cam.panX; ptr.panY0 = scene.cam.panY;
       const lab = e.target.closest('.label');
       ptr.hit = lab ? lab.dataset.id : hitTest(e.clientX, e.clientY);
       ptr.badge = Boolean(e.target.closest('.badge'));
@@ -636,16 +775,19 @@ function bindGraph() {
       const dy = e.clientY - ptr.y0;
       if (!ptr.moved && Math.hypot(dx, dy) > 4) { ptr.moved = true; graphEl.classList.add('dragging'); setHover(null); }
       if (ptr.moved) {
-        scene.cam.yaw = ptr.yaw0 + dx * 0.006;
-        scene.cam.pitch = scene.want.pitch = clamp(ptr.pitch0 + dy * 0.006, -1.3, 1.3);
+        if (flatView()) {
+          scene.cam.panX = scene.want.panX = ptr.panX0 + dx;
+          scene.cam.panY = scene.want.panY = ptr.panY0 + dy;
+        } else {
+          scene.cam.yaw = ptr.yaw0 + dx * 0.006;
+          scene.cam.pitch = scene.want.pitch = clamp(ptr.pitch0 + dy * 0.006, -1.3, 1.3);
+        }
         state.userMoved = true;
       }
     } else if (ptr.active.size === 2) {
       const [a, b] = [...ptr.active.values()];
       const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
-      const [lo, hi] = distRange();
-      scene.cam.dist = scene.want.dist = clamp(ptr.dist0 * ptr.pinch0 / d, lo, hi);
-      state.userMoved = true;
+      zoomTo(ptr.dist0 * ptr.pinch0 / d, (a.x + b.x) / 2, (a.y + b.y) / 2);
     }
     interact();
   });
@@ -655,7 +797,7 @@ function bindGraph() {
     if (!ptr.active.size) {
       graphEl.classList.remove('dragging');
       if (!ptr.moved && e.type === 'pointerup' && ptr.hit) {
-        if (ptr.badge) toggleCollapse(ptr.hit); else select(ptr.hit);
+        if (ptr.badge) toggleCollapse(ptr.hit); else clickNode(ptr.hit);
       }
       ptr.moved = false;
       ptr.hit = null;
@@ -665,28 +807,312 @@ function bindGraph() {
   graphEl.addEventListener('pointerup', end);
   graphEl.addEventListener('pointercancel', end);
   graphEl.addEventListener('pointerleave', () => setHover(null));
-  graphEl.addEventListener('dblclick', (e) => {
-    const lab = e.target.closest('.label');
-    const id = lab ? lab.dataset.id : hitTest(e.clientX, e.clientY);
-    if (id && !e.target.closest('.badge')) toggleCollapse(id);
-  });
   graphEl.addEventListener('wheel', (e) => {
     e.preventDefault();
-    const [lo, hi] = distRange();
     const f = Math.exp(e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0016));
-    scene.cam.dist = scene.want.dist = clamp(scene.want.dist * f, lo, hi);
-    state.userMoved = true;
+    zoomTo(scene.want.dist * f, e.clientX, e.clientY);
     interact();
   }, { passive: false });
   if (window.ResizeObserver) new ResizeObserver(() => { if (graphEl.clientWidth) { resizeCanvas(); if (!state.userMoved) fit(false); } }).observe(graphEl);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) wake(); });
 }
 
+// ---------- map: the tree as cards ----------
+// Children that have visible children sit side by side; the others stack in one column
+// on the left, under a spine. Plain SVG with HTML cards, panned and zoomed by d3.zoom.
+const DUR = REDUCED ? 0 : 280;
+const SIZE = { root: { w: 208, h: 54 }, parent: { w: 188, h: 46 }, leaf: { w: 176, h: 34 } };
+const BLOCK_EXTRA = 32; // two lines of reason under the title
+function sizeOf(n) {
+  const k = kindOf(n.id);
+  const s = SIZE[k];
+  return { w: s.w, h: s.h + (n.status === 'blocked' ? BLOCK_EXTRA : 0), kind: k };
+}
+const COL_GAP = 14;
+const ROW_GAP = 42;
+const STACK_GAP = 10;
+const STACK_INDENT = 14;
+const cmSvg = d3.select('#cardmap');
+const gView = d3.select('#viewport');
+const gEdges = d3.select('#edges');
+const gX = d3.select('#xlinks');
+const gNodes = d3.select('#nodes');
+// The dot grid is ground, not wallpaper: it tracks pan and zoom, and fades out at
+// both ends of the range so a zoomed-out map is not sitting on moire.
+const gridPattern = document.getElementById('dots');
+const gridRect = document.getElementById('grid');
+function gridOpacity(k) {
+  if (k <= 0.5 || k >= 2.4) return 0;
+  if (k < 0.85) return (k - 0.5) / 0.35;
+  if (k > 1.6) return (2.4 - k) / 0.8;
+  return 1;
+}
+function syncGrid(t) {
+  if (!gridPattern || !gridRect) return;
+  gridPattern.setAttribute('patternTransform', `translate(${t.x},${t.y}) scale(${t.k})`);
+  gridRect.style.opacity = gridOpacity(t.k);
+}
+const zoom = d3.zoom().scaleExtent([0.08, 3]).on('zoom', (e) => {
+  gView.attr('transform', e.transform);
+  syncGrid(e.transform);
+  if (e.sourceEvent) state.userMoved = true;
+});
+cmSvg.call(zoom).on('dblclick.zoom', null);
+const cm = { nodes: [], links: [], sig: null };
+
+// How many columns a stack of `n` leaves breaks into. One column keeps a small
+// group readable; a long one turns the whole drawing into a tall thin ribbon in an
+// empty canvas, which is the single worst thing this view can do.
+function stackColumns(n, maxCols) {
+  if (n < 5 || maxCols < 2) return 1;
+  return Math.min(maxCols, Math.ceil(n / 4));
+}
+function cmLayout(tree, maxCols = 1) {
+  const build = (v, parent) => {
+    const s = sizeOf(v.n);
+    const item = { id: v.id, n: v.n, v, w: s.w, h: s.h, kind: s.kind, depth: v.depth, parent, children: [], stacked: false, x: 0, y: 0 };
+    for (const c of v.children) item.children.push(build(c, item));
+    return item;
+  };
+  const root = build(tree, null);
+  const all = [];
+  const measure = (it) => {
+    all.push(it);
+    it.stack = it.children.filter((c) => c.children.length === 0);
+    it.branches = it.children.filter((c) => c.children.length > 0);
+    for (const c of it.stack) { c.stacked = true; all.push(c); }
+    for (const c of it.branches) measure(c);
+    it.cols = [];
+    if (it.stack.length) {
+      const n = stackColumns(it.stack.length, maxCols);
+      const per = Math.ceil(it.stack.length / n);
+      for (let i = 0; i < it.stack.length; i += per) it.cols.push(it.stack.slice(i, i + per));
+    }
+    it.colW = it.stack.length ? Math.max(...it.stack.map((c) => c.w)) + STACK_INDENT : 0;
+    it.stackW = it.cols.length ? it.colW * it.cols.length + COL_GAP * (it.cols.length - 1) : 0;
+    it.branchW = it.branches.reduce((s, c) => s + c.width, 0) + Math.max(0, it.branches.length - 1) * COL_GAP;
+    it.inner = it.stackW + (it.stackW && it.branchW ? COL_GAP : 0) + it.branchW;
+    it.width = Math.max(it.w, it.inner);
+  };
+  measure(root);
+  const rowH = [];
+  for (const it of all) if (!it.stacked) rowH[it.depth] = Math.max(rowH[it.depth] || 0, it.h);
+  const rowY = [0];
+  for (let d = 1; d <= rowH.length; d++) rowY[d] = rowY[d - 1] + (rowH[d - 1] || 0) + ROW_GAP;
+  const place = (it, left) => {
+    it.x = left + it.width / 2;
+    it.y = rowY[it.depth];
+    let cursor = left + (it.width - it.inner) / 2;
+    if (it.cols.length) {
+      it.spineX = [];
+      for (const col of it.cols) {
+        let y = rowY[it.depth + 1];
+        for (const c of col) {
+          c.x = cursor + STACK_INDENT + c.w / 2;
+          c.y = y;
+          y += c.h + STACK_GAP;
+        }
+        it.spineX.push(cursor + 1);
+        cursor += it.colW + COL_GAP;
+      }
+    }
+    for (const c of it.branches) { place(c, cursor); cursor += c.width + COL_GAP; }
+  };
+  place(root, 0);
+  cm.nodes = all;
+  const links = [];
+  for (const it of all) {
+    for (const c of it.branches || []) links.push({ key: c.id, kind: 'branch', s: it, t: c });
+    for (let i = 0; i < (it.cols || []).length; i++) {
+      const col = it.cols[i];
+      const x = it.spineX[i];
+      links.push({ key: `${it.id}:spine:${i}`, kind: 'spine', s: it, items: col, x });
+      for (const c of col) links.push({ key: c.id, kind: 'elbow', s: it, t: c, x });
+    }
+  }
+  cm.links = links;
+}
+// Tapered ribbon from the parent's bottom to the child's top: 6 px at the parent, 2 px at the child.
+function ribbonPath(l) {
+  const x0 = l.s.x; const y0 = l.s.y + l.s.h; const x1 = l.t.x; const y1 = l.t.y;
+  const m = (y0 + y1) / 2;
+  const a = 3; const b = 1;
+  return `M${x0 - a},${y0} C${x0 - a},${m} ${x1 - b},${m} ${x1 - b},${y1} L${x1 + b},${y1} C${x1 + b},${m} ${x0 + a},${m} ${x0 + a},${y0} Z`;
+}
+function spinePath(l) {
+  // Leaves the parent's own edge, wherever this column sits.
+  const lo = l.s.x - l.s.w / 2 + 22;
+  const hi = l.s.x + l.s.w / 2 - 22;
+  const x0 = Math.min(hi, Math.max(lo, l.x)); const y0 = l.s.y + l.s.h - 2;
+  const first = l.items[0]; const last = l.items[l.items.length - 1];
+  const yTop = first.y + first.h / 2;
+  const yEnd = last.y + last.h / 2;
+  const c = Math.min(18, Math.max(8, (yTop - y0) / 2));
+  return `M${x0},${y0} C${x0},${y0 + c} ${l.x},${yTop - c - 4} ${l.x},${yTop - 4} L${l.x},${yEnd}`;
+}
+function elbowPath(l) {
+  const y = l.t.y + l.t.h / 2;
+  const x1 = l.t.x - l.t.w / 2;
+  return `M${l.x},${y - 6} Q${l.x},${y} ${l.x + 6},${y} L${x1},${y}`;
+}
+function linkPath(l) {
+  return l.kind === 'branch' ? ribbonPath(l) : l.kind === 'spine' ? spinePath(l) : elbowPath(l);
+}
+function xlinkPath(s, t) {
+  if (Math.abs(s.x - t.x) < (s.w + t.w) / 2) {
+    const down = s.y < t.y;
+    const y0 = down ? s.y + s.h : s.y;
+    const y1 = down ? t.y : t.y + t.h;
+    return `M${s.x},${y0} C${s.x},${(y0 + y1) / 2} ${t.x},${(y0 + y1) / 2} ${t.x},${y1}`;
+  }
+  const dir = t.x > s.x ? 1 : -1;
+  const x0 = s.x + (dir * s.w) / 2;
+  const x1 = t.x - (dir * t.w) / 2;
+  const sy = s.y + s.h / 2;
+  const ty = t.y + t.h / 2;
+  const mx = (x0 + x1) / 2;
+  return `M${x0},${sy} C${mx},${sy} ${mx},${ty} ${x1},${ty}`;
+}
+// Cross-links ("depends on"); a hidden endpoint is represented by its nearest visible ancestor.
+function xlinkData(items) {
+  const pos = new Map(items.map((d) => [d.id, d]));
+  const seen = new Set();
+  const out = [];
+  for (const d of items) {
+    for (const target of d.n.links || []) {
+      let t = nodeOf(target);
+      while (t && !pos.has(t.id)) t = nodeOf(t.parent);
+      if (!t || t.id === d.id) continue;
+      const key = `${d.id}|${t.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ key, from: d.id, to: t.id, s: d, t: pos.get(t.id) });
+    }
+  }
+  return out;
+}
+const tf = (d, k) => `translate(${d.x},${d.y}) scale(${k == null ? 1 : k})`;
+function renderCardMap() {
+  const first = !cm.nodes.length;
+  const tree = visibleTree();
+  $('#allopen').hidden = !(state.scope === 'open' && !tree.children.length);
+  cmBestLayout(tree);
+  const sig = cm.nodes.map((d) => `${d.id}:${d.h}`).join(',');
+  const structural = sig !== cm.sig;
+  cm.sig = sig;
+  const dur = first ? 0 : DUR;
+
+  gEdges.selectAll('path').data(cm.links, (l) => l.key)
+    .join(
+      (enter) => enter.append('path').attr('d', linkPath).style('opacity', first ? 1 : 0),
+      (update) => update,
+      (exit) => exit.transition('out').duration(dur).style('opacity', 0).remove(),
+    )
+    .attr('class', (l) => `link ${l.kind}`)
+    .transition('pos').duration(dur).attr('d', linkPath).style('opacity', 1);
+
+  gX.selectAll('path').data(xlinkData(cm.nodes), (d) => d.key)
+    .join('path')
+    .attr('data-from', (d) => d.from).attr('data-to', (d) => d.to)
+    .transition('pos').duration(dur).attr('d', (d) => xlinkPath(d.s, d.t));
+
+  const g = gNodes.selectAll('g.node').data(cm.nodes, (d) => d.id)
+    .join(
+      (enter) => {
+        // New cards grow out of their parent's position.
+        const e = enter.append('g').attr('class', 'node')
+          .attr('transform', (d) => (first || !d.parent ? tf(d) : tf(d.parent, 0.6)))
+          .style('opacity', first ? 1 : 0);
+        e.append('foreignObject').append('xhtml:div').attr('class', 'card').attr('tabindex', '0');
+        return e;
+      },
+      (update) => update,
+      (exit) => exit.transition('out').duration(dur).style('opacity', 0).attr('transform', (d) => (d.parent ? tf(d.parent, 0.6) : tf(d, 0.6))).remove(),
+    );
+  g.select('foreignObject').attr('width', (d) => d.w).attr('height', (d) => d.h).attr('x', (d) => -d.w / 2).attr('y', 0);
+  g.transition('pos').duration(dur).ease(d3.easeCubicOut).attr('transform', (d) => tf(d)).style('opacity', 1);
+  g.each(function (d) { syncCard(this.firstChild.firstChild, d.n, { collapsed: d.v.hidden > 0, hidden: d.v.hidden }); });
+
+  applyXlinks();
+  if ((first || structural) && !state.userMoved) fit(!first);
+}
+function applyXlinks() {
+  const ids = new Set([state.hover, state.selected].filter(Boolean));
+  gX.selectAll('path').classed('show', (d) => ids.has(d.from) || ids.has(d.to));
+}
+// Halos sit 8 px outside the box, dashed rings 5, count badges 9 below, unread dots
+// 3 above-right, and spines 14 px to the left. Measure what is drawn, not the boxes.
+const DECOR = 14;
+function cmBounds() {
+  let x0 = Infinity; let x1 = -Infinity; let y0 = Infinity; let y1 = -Infinity;
+  for (const d of cm.nodes) {
+    x0 = Math.min(x0, d.x - d.w / 2); x1 = Math.max(x1, d.x + d.w / 2);
+    y0 = Math.min(y0, d.y); y1 = Math.max(y1, d.y + d.h);
+  }
+  return { x0: x0 - DECOR, x1: x1 + DECOR, y0: y0 - DECOR, y1: y1 + DECOR };
+}
+function cmFrame() {
+  const r = $('#cardmap').getBoundingClientRect();
+  const ins = chromeInsets();
+  return {
+    r,
+    ins,
+    w: Math.max(120, r.width - ins.left - ins.right),
+    h: Math.max(120, r.height - ins.top - ins.bottom),
+    cap: r.width >= 1900 ? 1.7 : 1.25,
+  };
+}
+// Fit and centre the whole visible tree in the free area. Scale is capped at 1.25.
+function fitCardMap(animate) {
+  const f = cmFrame();
+  if (!cm.nodes.length || f.r.width < 20 || f.r.height < 20 || state.view !== 'map') { cm.sig = null; return; }
+  const b = cmBounds();
+  const k = Math.max(0.08, Math.min(f.cap, f.w / (b.x1 - b.x0), f.h / (b.y1 - b.y0)));
+  const t = d3.zoomIdentity
+    .translate(f.ins.left + (f.w - (b.x0 + b.x1) * k) / 2, f.ins.top + (f.h - (b.y0 + b.y1) * k) / 2)
+    .scale(k);
+  (animate && DUR ? cmSvg.transition().duration(DUR) : cmSvg).call(zoom.transform, t);
+  state.userMoved = false;
+}
+// Lay the tree out at 1 to 4 stack columns and keep whichever fills the canvas best.
+// An extra column has to buy at least 3 % more scale to be worth the extra width.
+function cmBestLayout(tree) {
+  const f = cmFrame();
+  let best = { cols: 1, k: -1 };
+  for (const cols of [1, 2, 3, 4]) {
+    cmLayout(tree, cols);
+    const b = cmBounds();
+    const k = Math.min(f.cap, f.w / (b.x1 - b.x0), f.h / (b.y1 - b.y0));
+    if (k > best.k * 1.03) best = { cols, k };
+  }
+  if (best.cols !== 4) cmLayout(tree, best.cols);
+}
+function bindCardMap() {
+  // Click opens what is folded or selects; the count pill folds and unfolds; hover shows cross-links.
+  const el = $('#cardmap');
+  el.addEventListener('click', (e) => {
+    const c = e.target.closest('.card');
+    if (!c) return;
+    if (e.target.closest('.badge')) { toggleCollapse(c.dataset.id); return; }
+    clickNode(c.dataset.id);
+  });
+  el.addEventListener('mouseover', (e) => {
+    const c = e.target.closest('.card');
+    const id = c ? c.dataset.id : null;
+    if (id !== state.hover) { state.hover = id; applyXlinks(); }
+  });
+  el.addEventListener('mouseleave', () => { if (state.hover) { state.hover = null; applyXlinks(); } });
+}
+function fit(animate) {
+  if (state.view === 'map') fitCardMap(animate);
+  else fitOrbs(animate);
+}
+
 // ---------- outline ----------
 function renderOutline() {
   const tree = visibleTree();
   $('#allopen').hidden = !(state.scope === 'open' && !tree.children.length);
-  const rows = C.flatten(tree).map((it) => ({ id: it.id, n: it.n, depth: it.depth, kids: it.children.length > 0 || it.collapsed, collapsed: it.collapsed }));
+  const rows = C.flatten(tree).map((it) => ({ id: it.id, n: it.n, depth: it.depth, kids: it.children.length > 0 || it.hidden > 0, collapsed: it.hidden > 0, hidden: it.hidden }));
   const row = d3.select('#outline').selectAll('div.row').data(rows, (d) => d.id)
     .join((enter) => {
       const r = enter.append('div').attr('class', 'row');
@@ -699,7 +1125,7 @@ function renderOutline() {
   row.classed('open', (d) => Boolean(d.kids) && !d.collapsed);
   row.select('button.chev').html(icon('chevron')).attr('disabled', (d) => (d.kids ? null : true))
     .attr('aria-expanded', (d) => (d.kids ? String(!d.collapsed) : null));
-  row.select('div.card').each(function (d) { syncCard(this, d.n, { collapsed: d.collapsed, status: true }); });
+  row.select('div.card').each(function (d) { syncCard(this, d.n, { collapsed: d.collapsed, hidden: d.hidden, status: true }); });
 }
 
 // ---------- done: the archive ----------
@@ -857,16 +1283,16 @@ function emptyPanelHtml() {
   } else if (now) {
     const path = focusPath(now.id);
     const note = lastNote(now);
-    head = `<div><h2>Claude is working</h2><p class="lead">On <strong>${esc(now.title)}</strong>${path.length ? ` (${esc(path.join(' › '))})` : ''}${now.started_at ? `, for ${esc(ago(now.started_at))}` : ''}.${note ? ` Last note: <em>${esc(note)}</em>.` : ''} Pick any orb to read it or send a message about it.</p></div>`;
+    head = `<div><h2>Claude is working</h2><p class="lead">On <strong>${esc(now.title)}</strong>${path.length ? ` (${esc(path.join(' › '))})` : ''}${now.started_at ? `, for ${esc(ago(now.started_at))}` : ''}.${note ? ` Last note: <em>${esc(note)}</em>.` : ''}</p></div>`;
   } else if (p.total && p.done === p.total) {
     head = `<div><h2>All done</h2><p class="lead">Every task on this map is finished. The Done tab lists them; pick one to read what was decided.</p></div>`;
   } else {
-    head = `<div><h2>Nothing in progress</h2><p class="lead">Pick an orb to read what it is, why it exists and how Claude will know it is done.</p></div>`;
+    head = `<div><h2>Nothing in progress</h2><p class="lead">Pick a task to read it or message Claude about it.</p></div>`;
   }
   return `<div class="p-empty">
     ${head}
     <div>
-      <span class="k">What the orbs mean</span>
+      <span class="k">What the colours mean</span>
       <ul class="legend">
         ${LEGEND.map(([st, text]) => `<li><span class="swatch st-${st}"><i class="sdot"></i></span>${esc(text)}</li>`).join('')}
         <li><span class="swatch dashed"><i class="sdot"></i></span>You added it from here</li>
@@ -876,10 +1302,10 @@ function emptyPanelHtml() {
     <div>
       <span class="k">Shortcuts</span>
       <ul class="keys">
-        <li><kbd>drag</kbd>Turn the map; scroll or pinch to zoom</li>
-        <li><kbd>click</kbd>Open a task; the count pill or a double-click folds its branch</li>
-        <li><kbd>f</kbd>Fit the map to the window</li>
-        <li><kbd>o</kbd>Pause or resume the slow orbit</li>
+        <li><kbd>click</kbd>Open a task and its branch; again to fold it</li>
+        <li><kbd>drag</kbd>${state.view === 'orbs' ? 'Turn' : 'Move'} the map; scroll or pinch to zoom</li>
+        <li><kbd>f</kbd>Fit to the window${state.view === 'orbs' ? '; <kbd>o</kbd> pauses the turning' : ''}</li>
+        <li><kbd>1</kbd>–<kbd>4</kbd>Map, Graph, 3D, List</li>
       </ul>
     </div>
   </div>`;
@@ -975,23 +1401,24 @@ function renderActivity() {
 function applyView() {
   const main = $('#main');
   const done = state.scope === 'done';
-  main.classList.toggle('view-graph', !done && state.view === 'graph');
-  main.classList.toggle('view-outline', !done && state.view === 'outline');
+  for (const v of VIEWS) main.classList.toggle(`view-${v}`, !done && state.view === v);
   main.classList.toggle('view-done', done);
   for (const b of document.querySelectorAll('.seg button[data-view]')) { b.setAttribute('aria-pressed', String(b.dataset.view === state.view)); b.disabled = done; }
   for (const b of document.querySelectorAll('.seg button[data-scope]')) b.setAttribute('aria-pressed', String(b.dataset.scope === state.scope));
-  $('#fit-btn').disabled = done || state.view !== 'graph';
+  $('#fit-btn').disabled = done || state.view === 'outline';
 }
 function renderMain() {
   const empty = !hasKids(rootId());
   $('#main').classList.toggle('is-empty', empty);
   if (empty) { stopScene(); $('#allopen').hidden = true; return; }
   if (state.scope === 'done') { stopScene(); $('#allopen').hidden = true; renderDone(); return; }
-  if (state.view === 'graph') renderGraph();
+  if (orbView()) renderGraph();
+  else if (state.view === 'map') { stopScene(); renderCardMap(); }
   else { stopScene(); renderOutline(); }
 }
 function applySelection() {
   for (const el of document.querySelectorAll('.card, .label, .dl-row')) el.classList.toggle('selected', el.dataset.id === state.selected);
+  if (state.view === 'map') applyXlinks();
   wake();
 }
 function render() {
@@ -1018,7 +1445,7 @@ function setMap(map, log) {
 }
 
 // ---------- selection, collapse, scope, view ----------
-function select(id) {
+function select(id, { sheet = true } = {}) {
   if (id === state.selected) return;
   if (state.selected) {
     const draft = $('#fb-text').value;
@@ -1031,13 +1458,39 @@ function select(id) {
   panelError('');
   applySelection();
   renderPanel();
-  if (narrow()) setSheet(Boolean(state.selected));
+  if (narrow() && (sheet || !state.selected)) setSheet(Boolean(state.selected));
 }
-function toggleCollapse(id) {
-  if (!hasKids(id)) return;
-  if (state.collapsed.has(id)) state.collapsed.delete(id); else state.collapsed.add(id);
+const visibleItem = (id) => C.flatten(visibleTree()).find((it) => it.id === id);
+function saveFolds() {
   ss.set(`taskmap:collapsed:${state.pid}`, [...state.collapsed]);
+  ss.set(`taskmap:expanded:${state.pid}`, [...state.expanded]);
+}
+// Shows every child of `id`, finished ones included; fold() hides them all again.
+function reveal(id) {
+  state.collapsed.delete(id);
+  state.expanded.add(id);
+  saveFolds();
   renderMain();
+}
+function fold(id) {
+  if (id !== rootId()) state.collapsed.add(id);
+  state.expanded.delete(id);
+  saveFolds();
+  renderMain();
+}
+// The count pill, the chevron: open what is hidden, else fold.
+function toggleCollapse(id) {
+  const it = visibleItem(id);
+  if (!it || it.kind === 'leaf') return;
+  if (it.hidden > 0) reveal(id); else fold(id);
+}
+// One click on a task, in any view: see C.clickAction. Opening a branch on a phone
+// leaves the sheet shut so the new tasks are in view.
+function clickNode(id) {
+  const act = C.clickAction(visibleItem(id), state.selected);
+  if (act === 'reveal') reveal(id);
+  else if (act === 'fold') fold(id);
+  select(id, { sheet: act !== 'reveal' });
 }
 // On a phone the side panel is a sheet over the map rather than a column beside it.
 function setSheet(open) {
@@ -1051,11 +1504,14 @@ function replyToSelected() {
   $('#fb-text').focus();
 }
 function setView(v) {
-  if (v !== 'graph' && v !== 'outline') return;
+  if (!VIEWS.includes(v) || v === state.view) return;
   state.view = v;
   ss.set(`taskmap:view:${state.pid}`, v);
+  state.userMoved = false; // a new view is a new picture: refit it
+  graphEl.classList.remove('over');
   applyView();
   renderMain();
+  renderPanel();
 }
 function setScope(sc) {
   if (!['open', 'done', 'all'].includes(sc) || sc === state.scope) return;
@@ -1243,13 +1699,17 @@ function switchProject(id) {
   const storedCollapsed = ss.get(`taskmap:collapsed:${id}`, null);
   state.autoCollapse = storedCollapsed === null;
   state.collapsed = new Set(storedCollapsed || []);
-  state.view = ss.get(`taskmap:view:${id}`, narrow() ? 'outline' : 'graph');
+  state.expanded = new Set(ss.get(`taskmap:expanded:${id}`, []));
+  const view = ss.get(`taskmap:view:${id}`, null);
+  state.view = VIEWS.includes(view) ? view : narrow() ? 'outline' : 'map';
   state.scope = ss.get(`taskmap:scope:${id}`, 'open');
   $('#fb-text').value = '';
   closeInline();
   panelError('');
   toggleAddForm(false);
   resetScene();
+  gEdges.selectAll('*').remove(); gX.selectAll('*').remove(); gNodes.selectAll('*').remove();
+  cm.nodes = []; cm.links = []; cm.sig = null;
   $('#outline').innerHTML = '';
   $('#donelist').innerHTML = '';
   $('#donelist')._sig = null;
@@ -1284,18 +1744,15 @@ function bindEvents() {
   state.orbit = ss.get('taskmap:orbit', true);
 
   bindGraph();
+  bindCardMap();
 
-  // Outline: chevron, count pill or double-click folds, click selects.
+  // List: the chevron or the count pill folds, a click opens what is folded or selects.
   const outline = $('#outline');
   outline.addEventListener('click', (e) => {
     const row = e.target.closest('.row');
     if (!row) return;
     if (e.target.closest('.chev') || e.target.closest('.badge')) toggleCollapse(row.dataset.id);
-    else if (e.target.closest('.card')) select(row.dataset.id);
-  });
-  outline.addEventListener('dblclick', (e) => {
-    const row = e.target.closest('.row');
-    if (row && e.target.closest('.card') && !e.target.closest('.badge')) toggleCollapse(row.dataset.id);
+    else if (e.target.closest('.card')) clickNode(row.dataset.id);
   });
 
   // Side panel, strip and activity feed.
@@ -1341,8 +1798,10 @@ function bindEvents() {
     }
     if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === 'f') { e.preventDefault(); fit(true); }
-    if (e.key === 'o') { e.preventDefault(); state.orbit = !state.orbit; ss.set('taskmap:orbit', state.orbit); scene.quiet = 0; wake(); }
-    if ((e.key === 'Enter' || e.key === ' ') && t && t.classList && (t.classList.contains('card') || t.classList.contains('label'))) { e.preventDefault(); select(t.dataset.id); }
+    if (e.key === 'o' && state.view === 'orbs') { e.preventDefault(); state.orbit = !state.orbit; ss.set('taskmap:orbit', state.orbit); scene.quiet = 0; wake(); }
+    const k = { 1: 'map', 2: 'graph', 3: 'orbs', 4: 'outline' }[e.key];
+    if (k && state.scope !== 'done') { e.preventDefault(); setView(k); }
+    if ((e.key === 'Enter' || e.key === ' ') && t && t.classList && (t.classList.contains('card') || t.classList.contains('label'))) { e.preventDefault(); clickNode(t.dataset.id || (t.closest('[data-id]') || {}).dataset.id); }
   });
   // Both chrome layers float, and both change height as the header wraps or the strip
   // appears. Measure them directly instead of only when the graph refits.
@@ -1351,7 +1810,8 @@ function bindEvents() {
     const strip = $('#waiting').hidden ? 0 : $('#waiting').getBoundingClientRect().height;
     document.documentElement.style.setProperty('--chrome-top', `${Math.round(head + strip)}px`);
     $('#waiting').style.top = `${Math.round(head)}px`;
-    if (scene.w) { frame(); if (!state.userMoved) fit(false); else wake(); }
+    if (scene.w) frame();
+    if (!state.userMoved) fit(false); else wake();
   };
   if (window.ResizeObserver) {
     const ro = new ResizeObserver(syncChromeTop);
@@ -1393,5 +1853,5 @@ async function init() {
 }
 
 // For headless renders and debugging (tests/shots.js).
-window.taskmapUI = { state, scene, select, setScope, setView, fit };
+window.taskmapUI = { state, scene, cm, select, clickNode, setScope, setView, fit };
 init();

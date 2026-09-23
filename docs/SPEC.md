@@ -418,9 +418,9 @@ data: {"type":"ping"}
   `map` message. Reconnect with backoff (1 s, 2 s, 4 s, max 15 s) and show a
   "disconnected" state meanwhile; also re-fetch the map on reconnect.
 - Projects with `exists: false` are greyed in the switcher and not selectable.
-- Scope (Open | Done | All), view choice (Graph | Outline) and collapsed node ids are
-  kept in `sessionStorage` per project; the defaults are Open and Graph, or Outline
-  under 768 px. Open shows every node that is pending, in progress or blocked plus
+- Scope (Open | Done | All), view choice (Map | Graph | 3D | List) and folded and
+  opened node ids are kept in `sessionStorage` per project; the defaults are Open and
+  Map, or List under 768 px. Open shows every node that is pending, in progress or blocked plus
   whatever contains one (a skipped parent closes its subtree); Done is a flat list of
   finished and skipped leaves (a skipped parent counts as one row), newest first by
   `finished_at`, falling back to `updated`; All is the whole tree. Parents keep their
@@ -429,17 +429,33 @@ data: {"type":"ping"}
   `Message Claude` focuses the composer, and Close, the backdrop or Escape lowers it.
   Every control is at least 44 px and inputs are 16 px so iOS does not zoom. The
   overview grid becomes one column under 640 px.
-- The graph is a canvas of orbs in 3D (`ui/constellation.js` lays them out as a
-  dandelion: milestones on a sphere around the root, each deeper level on an outward
-  cap around its parent, spheres sized so sibling subtrees never touch). Titles are
-  HTML elements positioned from the same projection, each with four candidate spots,
-  placed in priority order so overlapping titles yield rather than collide. Drag
-  orbits, wheel or pinch zooms, click selects, the count pill or a double-click folds,
-  `f` fits, `o` pauses the slow idle orbit. The camera is fit on load, after every
-  structural change and on Fit / `f`, unless the user has orbited or zoomed: the
-  smallest distance at which every orb lands inside the free area (the window minus
-  the header, the strip and the panel, less room for titles), checked around the
-  whole turn, and never closer than 1.5x.
+- One click on a task, in any view, follows `clickAction` in `ui/constellation.js`:
+  a node with anything hidden under it (folded by hand, or finished work the scope
+  hides) opens, showing every child; clicking the selected, open node again folds it
+  (the root instead drops back to what the scope shows); anything else is selected.
+  The count pill and the List chevron toggle the same way without selecting.
+- Map is the card tree in SVG (children with children side by side, leaves stacked
+  under a spine, 1 to 4 stack columns, whichever fills the window best), panned and
+  zoomed by d3.zoom over a dot grid that fades at the ends of the zoom range.
+- Graph and 3D share one canvas of orbs. Graph lays the tree out flat as a radial
+  tree (the root in the middle, each level on a ring, every subtree a slice in
+  proportion to its leaves, the first milestone at the top) with faint rings per
+  level; drag pans, wheel or pinch zooms about the pointer. 3D lays it out as a
+  dandelion (milestones on a sphere around the root, each deeper level on an outward
+  cap around its parent, spheres sized so sibling subtrees never touch) over a grid
+  floor that turns and tilts with the orbs, with a dashed stem from the root to the
+  floor; drag orbits, `o` pauses the slow idle orbit. Switching between the two
+  morphs one layout into the other. Titles are HTML elements positioned from the
+  projection: the root, open milestones, the in-progress and blocked tasks, and the
+  hovered or selected one always ask for one; the rest only when zoomed in, and
+  finished milestones only in Graph. Each title tries the side away from the root
+  first, then three other spots, in priority order; a title may not cover another
+  title or someone else's orb. A folded orb carries a dotted ring and a `+N` pill.
+  The camera is fit on load, after every structural change and on Fit / `f`, unless
+  the user has moved or zoomed: in 3D the smallest distance at which every orb lands
+  inside the free area (the window minus the header, the strip and the panel, less
+  room for titles), checked around the whole turn; in Graph the bounding box,
+  centred; never closer than 1.5x.
 - Status on a leaf is colour plus shape (hollow ring / filled / small / faint) and
   glow; a hub (root, milestone, chunk) only changes its rim. Only the in-progress leaf
   breathes; the path from the root to it is drawn in accent.
@@ -452,10 +468,12 @@ data: {"type":"ping"}
   Reply control that focuses the feedback box on that node.
 - The UI never marks feedback read on its own.
 - Visual language: `docs/design/DESIGN.md`. The pure parts of the UI (scope filter,
-  done list, layout, projection, fit, title placement) are `ui/constellation.js`,
+  click rule, done list, both layouts, projection, fit, floor grid, title placement) are `ui/constellation.js`,
   covered by `node --test tests/ui.test.js`. Headless renders:
-  `node tests/shots.js <projectId|/path> <WxH> <out.png> [select=<id>] [view=outline]
-  [scope=open|done|all] [mobile=1] [interact=1]`; `interact=1` hovers, clicks, drags,
+  `node tests/shots.js <projectId|/path> <WxH> <out.png> [select=<id>]
+  [view=map|graph|orbs|outline] [scope=open|done|all] [mobile=1] [interact=1]
+  [click=<id> clicks=<n>]`; `click` clicks a task where it is drawn and reports how
+  many tasks were drawn before and after; `interact=1` hovers, clicks, drags,
   scrolls and presses `f` (touch-drags and pinches under `mobile=1`) and reports what
   changed; a 40-node fixture: `tests/gen40.js`.
 

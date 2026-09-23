@@ -26,7 +26,9 @@
   // The scope decides what the graph and the outline draw. `open` keeps a node when it,
   // or anything under it, is still pending, in progress or blocked; a skipped parent
   // closes everything beneath it. `all` keeps every node. The root always stays.
-  function visibleTree(map, kids, { scope = 'open', collapsed = new Set() } = {}) {
+  // `expanded` holds nodes the user opened by hand: their children all show, finished or
+  // not. `collapsed` holds nodes folded by hand: none of their children show.
+  function visibleTree(map, kids, { scope = 'open', collapsed = new Set(), expanded = new Set() } = {}) {
     const keep = new Map();
     const decide = (id, underSkipped) => {
       const n = map.nodes[id];
@@ -45,10 +47,15 @@
       const it = {
         id, n, depth, parent, children: [],
         kind: id === map.root ? 'root' : all.length ? 'parent' : 'leaf',
-        collapsed: collapsed.has(id) && all.length > 0,
-        hiddenDone: all.filter((k) => !keep.get(k.id)).length,
+        collapsed: collapsed.has(id) && all.length > 0 && id !== map.root,
+        hiddenDone: 0,
+        hidden: 0,
+        opened: expanded.has(id),
       };
-      if (!it.collapsed) for (const k of all) if (keep.get(k.id)) it.children.push(build(k.id, depth + 1, it));
+      const open = it.opened;
+      if (!it.collapsed) for (const k of all) if (open || keep.get(k.id)) it.children.push(build(k.id, depth + 1, it));
+      it.hidden = all.length - it.children.length;
+      it.hiddenDone = it.collapsed ? 0 : it.hidden;
       return it;
     };
     return build(map.root, 0, null);
@@ -79,6 +86,16 @@
       rows.push({ n, path: titlePath(map, n.id), when: whenOf(n), note: notes.length ? String(notes[notes.length - 1].text || '') : '' });
     }
     return rows.sort((a, b) => b.when.localeCompare(a.when) || idNum(b.n.id) - idNum(a.n.id));
+  }
+  // What one click on a node does. A node with anything hidden under it opens; clicking
+  // the selected, open node again folds it (the root only drops back to what the scope
+  // shows); anything else is just selected.
+  function clickAction(it, selectedId) {
+    if (!it || it.kind === 'leaf') return 'select';
+    if (it.hidden > 0) return 'reveal';
+    if (it.id !== selectedId || !it.children.length) return 'select';
+    if (it.kind === 'root') return it.opened ? 'fold' : 'select';
+    return 'fold';
   }
   function scopeCounts(map, kids) {
     const tree = visibleTree(map, kids, { scope: 'open' });
@@ -167,6 +184,94 @@
     place(tree, [0, 0, 0], [0, 1, 0]);
     return flatten(tree);
   }
+  // ---------- 2D layout: a radial tree ----------
+  // The root in the middle and each level on its own ring. Every subtree gets a slice of
+  // the circle in proportion to the leaves it holds, the first milestone at the top and
+  // the rest clockwise. A ring is just wide enough that neighbours on it never touch.
+  const FLAT_GAP = 26;
+  function layoutFlat(tree) {
+    const weigh = (it) => {
+      it.r = orbRadius(it);
+      it.w = it.children.length ? it.children.reduce((s, c) => s + weigh(c), 0) : 1;
+      return it.w;
+    };
+    weigh(tree);
+    // u runs clockwise from the top, as a fraction of the whole turn.
+    const assign = (it, u0, u1) => {
+      it.u = (u0 + u1) / 2;
+      it.span = u1 - u0;
+      let u = u0;
+      for (const c of it.children) { const sp = ((u1 - u0) * c.w) / it.w; assign(c, u, u + sp); u += sp; }
+    };
+    const first = tree.children[0];
+    const lead = first ? first.w / tree.w / 2 : 0;
+    assign(tree, -lead, 1 - lead);
+    const items = flatten(tree);
+    const rings = [0];
+    const maxR = [];
+    for (const it of items) maxR[it.depth] = Math.max(maxR[it.depth] || 0, it.r);
+    for (const it of items) {
+      if (!it.depth) continue;
+      const need = 2 * it.r + FLAT_GAP;
+      const half = Math.min(Math.PI, it.span * Math.PI * 2) / 2;
+      rings[it.depth] = Math.max(rings[it.depth] || 0, need / (2 * Math.max(1e-3, Math.sin(half))));
+    }
+    for (let d = 1; d < rings.length; d++) {
+      rings[d] = Math.max(rings[d] || 0, rings[d - 1] + maxR[d - 1] + maxR[d] + (d === 1 ? 110 : 80));
+    }
+    for (const it of items) {
+      const th = Math.PI / 2 - it.u * Math.PI * 2;
+      it.x = it.depth ? rings[it.depth] * Math.cos(th) : 0;
+      it.y = it.depth ? rings[it.depth] * Math.sin(th) : 0;
+      it.z = 0;
+    }
+    tree.rings = rings;
+    return items;
+  }
+  // Scale and centre that fit the flat drawing (points with margin m) in a w x h frame.
+  function fitFlat(points, focal, w, h) {
+    let x0 = Infinity; let x1 = -Infinity; let y0 = Infinity; let y1 = -Infinity;
+    for (const p of points) {
+      const m = p.m || 0;
+      x0 = Math.min(x0, p.x - m); x1 = Math.max(x1, p.x + m);
+      y0 = Math.min(y0, p.y - m); y1 = Math.max(y1, p.y + m);
+    }
+    if (!Number.isFinite(x0)) return { dist: focal, x: 0, y: 0 };
+    const k = Math.min(Math.max(1, w) / Math.max(1, x1 - x0), Math.max(1, h) / Math.max(1, y1 - y0));
+    return { dist: focal / k, x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+  }
+
+  // ---------- the floor under the 3D map ----------
+  // A square grid on a disc just below the cloud, fading toward its rim. It turns and
+  // tilts with the orbs, so the eye always knows which way is down and how far it has
+  // turned. Returned as world-space segments, each with a weight for its alpha.
+  function floorGrid(R) {
+    const y = -R * 1.05;
+    const disc = R * 1.75;
+    const raw = disc / 6;
+    const mag = 10 ** Math.floor(Math.log10(raw));
+    const step = [1, 2, 2.5, 5, 10].map((f) => f * mag).find((v) => v >= raw) || raw;
+    const segs = [];
+    const fade = (x, z) => Math.max(0, 1 - (Math.hypot(x, z) / disc) ** 2);
+    for (let k = -Math.floor(disc / step); k * step <= disc; k++) {
+      const c = k * step;
+      const half = Math.sqrt(Math.max(0, disc * disc - c * c));
+      const n = Math.max(2, Math.ceil((half * 2) / (step / 2)));
+      for (let i = 0; i < n; i++) {
+        const t0 = -half + (2 * half * i) / n; const t1 = -half + (2 * half * (i + 1)) / n;
+        const tm = (t0 + t1) / 2;
+        const axis = k === 0 ? 1.6 : 1;
+        segs.push({ a: { x: c, y, z: t0 }, b: { x: c, y, z: t1 }, w: fade(c, tm) * axis });
+        segs.push({ a: { x: t0, y, z: c }, b: { x: t1, y, z: c }, w: fade(tm, c) * axis });
+      }
+    }
+    for (let i = 0; i < 96; i++) {
+      const t0 = (i / 96) * Math.PI * 2; const t1 = ((i + 1) / 96) * Math.PI * 2;
+      segs.push({ a: { x: disc * Math.cos(t0), y, z: disc * Math.sin(t0) }, b: { x: disc * Math.cos(t1), y, z: disc * Math.sin(t1) }, w: 0.6 });
+    }
+    return { y, disc, step, segs };
+  }
+
   // Radius of the sphere around the origin that holds every orb, glow included.
   function cloudRadius(items) {
     let R = 0;
@@ -228,22 +333,25 @@
   // ---------- labels ----------
   // Greedy: the most important label takes the first of its candidate spots that is
   // free; anything that would overlap a placed label tries its next spot, then hides.
-  function placeLabels(items) {
+  // `obstacles` (the orbs) are avoided too, except by a `soft` label that finds no spot
+  // clear of them: that one may cover an orb, never another label.
+  function placeLabels(items, obstacles = []) {
     const order = items.map((r, i) => i).sort((a, b) => items[b].p - items[a].p || a - b);
     const kept = [];
     const chosen = new Array(items.length).fill(-1);
-    const hits = (r) => kept.some((k) => r.x < k.x + k.w && r.x + r.w > k.x && r.y < k.y + k.h && r.y + r.h > k.y);
+    const over = (r, k) => r.x < k.x + k.w && r.x + r.w > k.x && r.y < k.y + k.h && r.y + r.h > k.y;
+    const hits = (r) => kept.some((k) => over(r, k));
+    const blocked = (r) => obstacles.some((k) => over(r, k));
     for (const i of order) {
       const cands = items[i].cands || [items[i]];
-      for (let c = 0; c < cands.length; c++) {
-        if (hits(cands[c])) continue;
-        kept.push(cands[c]);
-        chosen[i] = c;
-        break;
-      }
+      let pick = cands.findIndex((r) => !hits(r) && !blocked(r));
+      if (pick < 0 && items[i].soft) pick = cands.findIndex((r) => !hits(r));
+      if (pick < 0) continue;
+      kept.push(cands[pick]);
+      chosen[i] = pick;
     }
     return chosen;
   }
 
-  return { index, visibleTree, flatten, doneList, scopeCounts, titlePath, layout, cloudRadius, orbRadius, project, fitDistance, fitDistanceFor, stars, placeLabels, closed };
+  return { index, visibleTree, flatten, doneList, scopeCounts, titlePath, clickAction, layout, layoutFlat, fitFlat, floorGrid, cloudRadius, orbRadius, project, fitDistance, fitDistanceFor, stars, placeLabels, closed };
 });

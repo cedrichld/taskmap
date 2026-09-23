@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// Headless render of the dashboard: node tests/shots.js <projectId|/path> <WxH> <out.png> [select=<nodeId>] [view=outline] [scope=open|done|all] [mobile=1] [settle=<ms>] [interact=1]
+// Headless render of the dashboard: node tests/shots.js <projectId|/path> <WxH> <out.png> [select=<nodeId>] [view=map|graph|orbs|outline] [scope=open|done|all] [mobile=1] [settle=<ms>] [interact=1] [click=<nodeId> clicks=<n>]
 // Drives Chrome over the DevTools protocol (an open SSE stream keeps --virtual-time-budget from ever settling).
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -58,6 +58,27 @@ async function main() {
     if (opts.view) { await evaluate(`window.taskmapUI && window.taskmapUI.setView(${JSON.stringify(opts.view)}); 'ok'`); await sleep(300); }
     if (opts.select) { await evaluate(`window.taskmapUI && window.taskmapUI.select(${JSON.stringify(opts.select)}); 'ok'`); await sleep(500); }
     await sleep(Number(opts.settle || 900)); // let the orbs settle and the camera finish its fit
+    // click=<id> clicks that task where it is drawn (orb or card) and reports what opened.
+    if (opts.click) {
+      const at = async () => evaluate(`(() => { const ui = window.taskmapUI; const id = ${JSON.stringify(opts.click)};
+        const card = [...document.querySelectorAll('#cardmap .card[data-id="' + id + '"], #outline .card[data-id="' + id + '"]')].find((c) => c.offsetParent);
+        if (card && card.offsetParent) { const r = card.getBoundingClientRect(); return { x: r.left + 12, y: r.top + r.height / 2 }; }
+        const e = ui.scene.entries.get(id); if (!e) return null; const g = document.getElementById('graph').getBoundingClientRect();
+        return { x: g.left + e.sx, y: g.top + e.sy }; })()`);
+      const count = () => evaluate(`(() => { const ui = window.taskmapUI; return ui.state.view === 'map' ? ui.cm.nodes.length : ui.state.view === 'outline' ? document.querySelectorAll('#outline .row').length : [...ui.scene.entries.values()].filter((e) => !e.gone).length; })()`);
+      const clicks = [];
+      for (let i = 0; i < Number(opts.clicks || 1); i++) {
+        const p = await at();
+        if (!p) { clicks.push('not drawn'); break; }
+        const before = await count();
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y, button: 'none' });
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+        await sleep(900);
+        clicks.push({ before, after: await count(), selected: await evaluate('window.taskmapUI.state.selected') });
+      }
+      console.log('click: ' + JSON.stringify(clicks));
+    }
     // interact=1 drives the graph like a hand would and reports what changed.
     let interaction = null;
     if (opts.interact) {
