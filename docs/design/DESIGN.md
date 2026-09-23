@@ -1,7 +1,7 @@
 # taskmap dashboard — design language
 
-One screen, left open all day on a second monitor, that shows a plan as a tree of
-bubbles and lets the owner talk back. Dark only, because the use scene is a second
+One screen, left open all day on a second monitor, that shows a plan as a constellation
+of orbs and lets the owner talk back. Dark only, because the use scene is a second
 monitor beside a terminal at any hour. Readable at arm's length for a 40-node map
 without panning. Everything moves for a reason or not at all.
 
@@ -32,11 +32,12 @@ the 3:1 that WCAG 1.4.11 asks of a control boundary. A sticky footer over scroll
 content (the composer) is opaque `--chrome-strong`, never translucent: content
 reading through a control strip is a bug, not depth.
 
-The canvas carries a **dot grid**: 1 px dots on a 24 px lattice, `--hairline` coloured,
-drawn behind the tree and tracking pan and zoom so it reads as ground rather than
-wallpaper. It fades in over 0.5–0.85× and out over 1.6–2.4× (`opacity` only,
-compositor-cheap), so a zoomed-out 40-node map is not sitting on moiré and a
-zoomed-in detail view is clean.
+The canvas carries a **starfield**: 220 one-pixel points on a shell two and a half
+times the size of the cloud, `--text` at 6–18 %, drawn on the same camera as the orbs
+so they turn with the map. That parallax is what makes the depth read; nothing else
+about them is meant to be noticed. Under the root sits a **pool of light**, `--accent`
+at 7 % fading to nothing over the cloud's radius, so the constellation floats in space
+rather than sitting on flat black.
 
 ## 2. Type
 
@@ -60,79 +61,100 @@ for nothing else yet. Line height 1.45 for prose, 1.25 for titles.
 progress counts, percentages, elapsed times, unread badges — so nothing shifts as it
 ticks. Uppercase section labels keep `.06em`; nothing else gets letter-spacing tricks.
 
-## 3. Nodes
+## 3. Scope
 
-Bubbles, tightened. Shape and size encode the level; a thin ring plus a shaped mark
-encode the status; a trailing pill carries the count. Nothing else is drawn.
+The map is read in three scopes, chosen in the header and remembered per project:
 
-| Level | Size | Radius | Surface | Title |
-| --- | --- | --- | --- | --- |
-| Root | 208 × 54 | 16 | **filled** `--surface-2` | 15 px / 600 |
-| Parent | 188 × 46 | 14 | 2.5 % wash | 13 px / 600 |
-| Leaf | 176 × 34 (grows to 2 lines) | 18 (pill) | 2.5 % wash | 12 px / 450 |
+| Scope | Shows | Why |
+| --- | --- | --- |
+| **Open** (default) | every node that is pending, in progress or blocked, and whatever contains one | a map with 250 finished tasks has to show the six that are not |
+| **Done** | a flat list of finished and dropped tasks, newest first, grouped by day, each with its milestone › chunk path, finish time and last note | the archive, one place, chronological |
+| **All** | the whole tree; finished leaves become small quiet orbs | structure and history together |
 
-The root is the only node with a real surface; everything else is a 2.5 % white wash
-that separates it from the dot grid without becoming a card. Leaves are pills — the
-smallest, lightest thing on the canvas, because there are the most of them.
+Open and All feed both the graph and the outline. A parent keeps its `done/total`
+pill in every scope, so a milestone with hidden finished leaves still says how far it
+is. The Done tab shows a count beside its name; so does Open.
 
-- **Status** is a 1 px ring in the status colour plus an 8 px **mark** in the leading
-  gutter. The mark carries shape as well as hue, because hue alone fails colour-blind
-  readers (WCAG 1.4.1) and fails everyone at 0.4× zoom:
+## 4. Orbs
 
-  | Status | Ring | Mark |
-  | --- | --- | --- |
-  | pending | hairline | hollow, `--dim` edge |
-  | in progress | accent (leaf) / accent at 30 % (its ancestors) | filled accent |
-  | done | `--ok` at 50 % | filled, with a check cut out of it |
-  | blocked | `--warn` | filled, with a bar cut out of it, and the node grows its question |
-  | skipped | hairline | struck through, title struck, node at 62 % |
+Every node is a sphere on the canvas; its title is HTML floating beside it, so text is
+crisp at any zoom and can be measured for collision. Size encodes the level, colour
+and glow encode the status, a trailing pill carries the count.
 
-- **In progress**: only the leaf being worked on carries full accent and a breathing
-  2 px halo. Its ancestors get the same ring at 30 % and no halo, so a still frame
-  shows one live node rather than a lit-up lineage.
-- **Blocked** nodes grow two lines: the question, with its "waiting on user:" prefix
-  stripped, under the title. The full reason is the tooltip, the panel and the strip.
-- **Skipped** keeps a hairline ring, strikes the mark and the title, fades to 62 %.
-- **User-added** nodes take a dashed hairline ring 3 px outside the border — different
-  in kind from the status ring, so the two never compete.
-- **Unread feedback** is an 8 px accent dot at the top-right corner, outside the flow.
-- **Hover** lifts 2 px on a spring (`cubic-bezier(.2,.85,.35,1.08)`, 180 ms) and turns on
-  the only layered shadow in the design: `0 1px 2px rgba(0,0,0,.5), 0 10px 26px
-  rgba(0,0,0,.4)`. Nothing else lifts.
-- **Selected** is a 1 px ring in `--text` plus the raised surface, so selection never
-  competes with the accent-coloured in-progress ring.
+| Level | Radius (world px) | Body |
+| --- | --- | --- |
+| Root | 26 | `#4d5568`, lit from the top-left, a cool white glow at 16 % |
+| Milestone | 16 | `#343a47`, same lighting, hairline rim |
+| Chunk | 11 | as milestone |
+| Step | 8 | as milestone |
+| Leaf, open | 7.5 | see status |
+| Leaf, finished | 4.5 | `--ok` at 78 %, no glow |
 
-## 4. Layout
+Every filled orb is a radial gradient offset to the top-left (55 % toward white at the
+highlight, 45 % toward black at the rim), which is the whole 3D illusion; sprites are
+rasterised once per colour and size and blitted.
 
-- Compact tree, laid out by `layout(maxCols)` in `ui/app.js`. Children that have
-  visible children sit side by side, 14 px apart; children without visible children
-  stack under their parent, indented 14 px, each column joined to the parent by its
-  own spine.
-- **The stack wraps.** A stack of five or more leaves breaks into up to four columns
-  of four. `bestLayout()` lays the whole tree out at one, two, three and four columns
-  and keeps whichever fills the canvas best, requiring 3 % more scale before it will
-  spend the extra width. A tall thin ribbon of nodes in an empty canvas is the worst
-  thing this view can do, and this is what stops it.
-- Row height per depth is the tallest side-by-side node at that depth plus a 42 px gap;
-  stacked leaves are 10 px apart.
-- Fit and centre in the **free** area — the window minus the header, the strip and
-  the panel — on load and after every structural change, capped at 1.25× (1.7×
-  above 1900 px, where the screen is read from further away). `bounds()` includes what is drawn, not the boxes: halos sit 8 px
-  outside, dashed rings 5, count pills 9 below, spines 14 to the left. Panning or
-  zooming stops auto-fit until Fit or `f`.
-- Closed subtrees start collapsed, as in `taskmap tree --open`.
-- Spacing scale: 4 · 8 · 12 · 16 · 24 · 32. Header rows 44 px. Panel padding 20.
+- **Status on a leaf**: pending is a hollow ring in `--dim` on a dark disc; in progress
+  is a filled `--accent` orb with a breathing glow (radius 3.6×, 50 % at the core,
+  additive); blocked is `--warn` with a slower, quieter glow (38 %); done is a small
+  `--ok` orb; skipped is `--dim` at 38 %.
+- **Status on a hub** (root, milestone, chunk): the body never changes; a 14 % rim in
+  the status colour says in progress (`--accent` at 70 %), blocked (`--warn`), done
+  (`--ok` at 70 %) or skipped (`--dim`). Blocked and in-progress hubs get a faint glow
+  (28 % and 20 %) so a lit branch is visible from across the room.
+- **Depth**: everything behind the centre fades toward 50 % (fog on links, orbs and
+  titles alike); nearer things are brighter and larger.
+- **Selected** is a 1.5 px `--text` ring 4 px outside the orb and the raised label;
+  **hover** is the same ring at 60 %. **User-added** orbs carry a dashed ring 6 px out
+  and a dashed outline on the label. **Unread feedback** is an accent dot at the orb's
+  top-right.
+- **Titles** sit 7 px beside their orb on a 62 % black pill: 12 px/450 for leaves,
+  13 px/600 for hubs, 15 px/600 for the root, a count pill after the title. A blocked
+  title grows its question in `--warn` on two clamped lines. The in-progress leaf's
+  title takes an accent-tinted pill; the selected one a `--text` inset ring.
+- **Which titles show**: every hub and every open leaf asks for its title; finished
+  leaves only when they are drawn at 5 px or more, or hovered, or selected. Each
+  title has four candidate spots (right, left, below, above) and is placed in the
+  first that does not overlap a title already placed; the order is the current task
+  (always first), selected, hovered, in-progress and blocked leaves, hubs in progress,
+  root, milestones, chunks, then open leaves, then finished ones. A title that was
+  visible last frame gets a small bonus so the set does not flicker as the map turns.
 
-## 5. Links
+## 5. Layout: a dandelion
 
-- Parent → child: a cubic curve drawn as a tapered ribbon, 5 px at the parent, 1.5 px
-  at the child, `--link` at 65 %, so it reads lighter toward the child.
-- Parent → stacked leaves: a 1.5 px spine down the left of the column, turning with a
-  soft elbow into each leaf's left edge.
-- Cross-links (`depends on`): 1.2 px dashed accent with an arrowhead, hidden until the
-  source or target is hovered or selected.
+`layout()` in `ui/constellation.js`, pure and deterministic, so the same map always
+draws the same shape.
 
-## 6. Colour
+- The root sits at the origin. Its milestones spread evenly over a **sphere** around it
+  (a Fibonacci spiral, phase seeded from the node id).
+- Every deeper level spreads over a **cap** of a sphere around its parent, 72° half-angle,
+  facing away from the grandparent, so a branch grows outward like a seed head. An
+  only child sits straight out along the axis.
+- The sphere's radius is the smallest that keeps every pair of sibling subtrees apart:
+  for each pair, `(R_i + R_j + 30) / (2 sin(θ/2))` with `θ` their angular separation,
+  and never less than `parent.r + max(R) + 30`. A subtree's radius `R` is its sphere
+  plus its largest child's `R`, so the guarantee holds all the way down.
+- **Fit** (load, structural change, Fit, `f`): the camera distance is the smallest at
+  which every orb, with a margin of 2.2 radii, lands inside the free area, checked at
+  24 yaws around the turn so the slow orbit never carries the map out of frame. The
+  free area is the window minus the header, the strip and the panel, less 36 % of its
+  width (capped at 300 px) for the titles that hang beside the orbs. The closest a fit
+  goes is 1.5×, so a map with two nodes does not fill the screen with one orb. Panning,
+  zooming or orbiting by hand stops auto-fit until Fit or `f`.
+- The camera looks slightly from above (pitch 0.38 rad) and starts turned 0.55 rad so
+  the first milestone is not in front of the root.
+
+## 6. Links
+
+- Parent → child: a 1 px line in `--link` at 80 %, faded by depth, drawn centre to
+  centre under the orbs.
+- The path from the root to the task in progress is `--accent` at 60 %, 1.5 px, so a
+  still frame says where Claude is even before the glow is noticed.
+- The path to the hovered or selected orb is `--text` at 45 %, 1.5 px.
+- Cross-links (`after`): 1.2 px dashed `--accent`, only for the orb under the pointer
+  or selected.
+
+## 7. Colour
 
 | Token | Value | Contrast on `--bg` | Use |
 | --- | --- | --- | --- |
@@ -151,24 +173,31 @@ outline, the overview and the feed: `pending` = hairline, `in progress` = accent
 near-black text (`#0a0c0f`, 6.4:1), never white (3.1:1). No gradients, no glow, no
 neon anywhere.
 
-## 7. Motion
+## 8. Motion
 
-Five things move, all under 300 ms except the breathing.
+The canvas has its own loop; it runs only while something moves and drops to 25 frames
+a second when the only motion is breathing. Under `prefers-reduced-motion: reduce`
+nothing below moves except the hover ring and the sheet.
 
-1. **Breathing halo** on the in-progress leaf: opacity 0.22 → 0.6 → 0.22 over 3.2 s.
-2. **Status morph**: `border-color` and `box-shadow` over 240 ms.
-3. **New node**: enters at its parent's position at 0.6× and 0 opacity, arrives over
-   280 ms ease-out.
-4. **Layout change**: positions interpolate over 280 ms; links follow.
-5. **Hover lift**: 2 px over 180 ms on `--spring`
-   (`cubic-bezier(.2,.85,.35,1.08)`). The overshoot is small and deliberate; a
-   bounce detector will still flag any `y₂ > 1`, and that finding is accepted.
+1. **Orbit**: the camera turns at 0.05 rad/s, one full turn in about two minutes. It
+   waits five seconds after the last touch, never turns under a pointer, and `o`
+   pauses it. This is the one thing that is always moving, and it is the reason the
+   map reads as 3D.
+2. **Breathing**: the in-progress leaf's glow swells and fades over 3.2 s; a blocked
+   leaf's over 4.6 s, quieter.
+3. **New orb**: appears at its parent's position at zero size and eases into place;
+   an orb leaving the scope shrinks and fades the same way (exponential ease, 170 ms
+   time constant).
+4. **Layout change**: positions ease the same way; links follow because they are drawn
+   from the current positions.
+5. **Fit**: distance and pitch ease with a 150 ms time constant; yaw is never reset.
+6. **Titles**: opacity over 160 ms so a title that yields or returns fades instead of
+   popping; position never animates.
 
 Sheets slide 240 ms; the progress bar eases 300 ms on `transform`. Nothing animates a
-layout property. `prefers-reduced-motion: reduce` removes the halo animation and zeroes
-every duration.
+layout property.
 
-## 8. The panel when nothing is selected
+## 9. The panel when nothing is selected
 
 The right rail used to be an instruction over 500 px of black, including at the exact
 moment something was blocked and waiting for an answer. It now answers whatever the
@@ -180,15 +209,16 @@ screen is currently asking:
    the whole product and it used to be the dimmest text on the page.
 4. Otherwise → a plain line about picking a bubble.
 
-Under that, always: the **legend** (the five status marks, plus user-added and unread)
-and the three **shortcuts**. Nothing else in the product teaches a nine-treatment ring
-vocabulary, and a tooltip cannot be read from two metres away.
+Under that, always: the **legend** (the five status marks on round swatches, plus
+user-added and unread) and the four **shortcuts** (drag, click, `f`, `o`). Nothing else
+in the product teaches the orb vocabulary, and a tooltip cannot be read from two metres
+away.
 
 **Undo.** A status write from here lands in a running agent's plan, so every one of
 them leaves a toast naming what changed with an Undo that writes the previous status
 back. It stays for 12 seconds.
 
-## 9. Overview
+## 10. Overview
 
 Bento grid: cards on a 320 px-minimum auto-fill, and a project with a live session
 spans two columns above 900 px — the thing you care about is the big tile. Each card
@@ -201,21 +231,24 @@ change. The page's question is "who needs me?", not only "who is running?". A pr
 with work in progress and no session heartbeat says *no session running* in `--warn`,
 because a stalled run and a healthy one otherwise look identical.
 
-## 10. Icons
+## 11. Icons
 
 A dozen marks, authored inline as 16 × 16 SVG on a 1.5 px stroke with round caps and
 joins: chevron, arrow-left, close, plus, reply, dot. No icon library, no Unicode glyph
 standing in for an icon. Anything that is not in the set does not get an icon.
 
-## 11. Chrome the browser draws
+## 12. Chrome the browser draws
 
 Themed from the palette, not left to defaults: text selection (`--accent` at 28 %),
 the caret, scrollbars (`--hairline-strong` thumb on transparent), focus rings (2 px
 `--accent` at 2 px offset, on every focusable element), and tabular numerals in data.
 
-## 12. Not done on purpose
+## 13. Not done on purpose
 
 - No light mode. The use scene is a second monitor next to a terminal.
 - No web fonts: the page stays self-contained and loads in one request. Operate mode
   permits a system sans; this one is tuned rather than chosen by default.
 - No shadows on resting elements. Depth is layering.
+- No 3D library. The constellation is a 2D canvas with its own camera and pre-rendered
+  orb sprites; the whole renderer is a few hundred lines and the repo stays
+  dependency-free.

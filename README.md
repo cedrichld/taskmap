@@ -97,8 +97,17 @@ The dashboard is not read-only. On any node you can:
 
 Unread messages stay highlighted until Claude has actually read them.
 
-The graph pans and zooms (`f` fits it to the window); **Outline** is the same tree as a
-list; the activity feed on the right shows every change with who made it.
+The map is a constellation: the project in the middle, milestones around it, their
+tasks fanning outward, the task in progress glowing, a slow turn so the depth reads.
+Drag to turn it, scroll to zoom, `f` fits it to the window, `o` pauses the turn.
+**Outline** is the same tree as a list; the activity feed on the right shows every
+change with who made it.
+
+Three tabs decide what you look at. **Open** (the default) shows only what is not
+finished yet, so a map with two hundred done tasks still shows the six that matter.
+**Done** lists everything finished, newest first, by day, with where it lived and the
+last note Claude left on it. **All** is the whole tree, finished work as small quiet
+orbs.
 
 ## Share to your phone
 
@@ -191,10 +200,11 @@ want. They are gitignored, so `git status` will not remind you.
 
 ```bash
 bash tests/smoke.sh          # temp project, isolated home, its own port
+node --test tests/ui.test.js # scope filter, done list, 3D layout, fit, title placement
 claude plugin validate .     # manifest and hook schema
 node tests/gen40.js <dir>    # a 40-node map for layout checks
 python3 tests/qr-verify.py   # decodes src/qr.js output with OpenCV (skips if absent)
-node tests/shots.js <projectId|/path> 1440x900 out.png [select=n10] [view=outline] [mobile=1]
+node tests/shots.js <projectId|/path> 1440x900 out.png [select=n10] [view=outline] [scope=done] [mobile=1] [interact=1]
 scripts/install-skills.sh <checkout>   # third-party design skills, not tracked here
 ```
 

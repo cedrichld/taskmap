@@ -418,23 +418,31 @@ data: {"type":"ping"}
   `map` message. Reconnect with backoff (1 s, 2 s, 4 s, max 15 s) and show a
   "disconnected" state meanwhile; also re-fetch the map on reconnect.
 - Projects with `exists: false` are greyed in the switcher and not selectable.
-- View choice (Graph | Outline) and collapsed node ids are kept in
-  `sessionStorage` per project; the default is Graph, or Outline under 768 px.
+- Scope (Open | Done | All), view choice (Graph | Outline) and collapsed node ids are
+  kept in `sessionStorage` per project; the defaults are Open and Graph, or Outline
+  under 768 px. Open shows every node that is pending, in progress or blocked plus
+  whatever contains one (a skipped parent closes its subtree); Done is a flat list of
+  finished and skipped leaves (a skipped parent counts as one row), newest first by
+  `finished_at`, falling back to `updated`; All is the whole tree. Parents keep their
+  `done/total` pill in every scope.
 - Under 768 px the side panel is a bottom sheet: selecting a node raises it,
   `Message Claude` focuses the composer, and Close, the backdrop or Escape lowers it.
   Every control is at least 44 px and inputs are 16 px so iOS does not zoom. The
   overview grid becomes one column under 640 px.
-- The graph is fit and centered on load and after every structural change
-  (nodes added or removed, a fold toggled) unless the user has panned or zoomed;
-  Fit / `f` restores auto-fit. It is centered in the free area — the window minus
-  the header, the Waiting-on-you strip and the side panel, all of which float over
-  the canvas — and capped at 1.25x, or 1.7x on windows 1900 px and wider.
-- Stacked leaves wrap into up to four columns. `bestLayout()` lays the tree out at
-  one to four columns and keeps whichever yields the largest fit scale, requiring a
-  3 % gain before spending the extra width.
-- Status on a node is a ring plus a shaped mark (hollow / filled / check / bar /
-  struck), never hue alone. Only the in-progress leaf carries full accent and the
-  breathing halo; its ancestors get the same ring at 30 % and no halo.
+- The graph is a canvas of orbs in 3D (`ui/constellation.js` lays them out as a
+  dandelion: milestones on a sphere around the root, each deeper level on an outward
+  cap around its parent, spheres sized so sibling subtrees never touch). Titles are
+  HTML elements positioned from the same projection, each with four candidate spots,
+  placed in priority order so overlapping titles yield rather than collide. Drag
+  orbits, wheel or pinch zooms, click selects, the count pill or a double-click folds,
+  `f` fits, `o` pauses the slow idle orbit. The camera is fit on load, after every
+  structural change and on Fit / `f`, unless the user has orbited or zoomed: the
+  smallest distance at which every orb lands inside the free area (the window minus
+  the header, the strip and the panel, less room for titles), checked around the
+  whole turn, and never closer than 1.5x.
+- Status on a leaf is colour plus shape (hollow ring / filled / small / faint) and
+  glow; a hub (root, milestone, chunk) only changes its rim. Only the in-progress leaf
+  breathes; the path from the root to it is drawn in accent.
 - With nothing selected the panel shows the first blocked node's question and an
   Answer button, or what Claude is working on, or "All done"; then the status legend
   and the keyboard shortcuts.
@@ -443,9 +451,13 @@ data: {"type":"ping"}
   lines, then ellipsis) and in a "Waiting on you" strip under the header with a
   Reply control that focuses the feedback box on that node.
 - The UI never marks feedback read on its own.
-- Visual language: `docs/design/DESIGN.md`. Headless renders:
+- Visual language: `docs/design/DESIGN.md`. The pure parts of the UI (scope filter,
+  done list, layout, projection, fit, title placement) are `ui/constellation.js`,
+  covered by `node --test tests/ui.test.js`. Headless renders:
   `node tests/shots.js <projectId|/path> <WxH> <out.png> [select=<id>] [view=outline]
-  [mobile=1]`; a 40-node fixture: `tests/gen40.js`.
+  [scope=open|done|all] [mobile=1] [interact=1]`; `interact=1` hovers, clicks, drags,
+  scrolls and presses `f` (touch-drags and pinches under `mobile=1`) and reports what
+  changed; a 40-node fixture: `tests/gen40.js`.
 
 ## 8. Plugin wiring
 

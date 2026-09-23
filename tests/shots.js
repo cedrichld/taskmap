@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// Headless render of the dashboard: node tests/shots.js <projectId|/path> <WxH> <out.png> [select=<nodeId>] [view=outline] [mobile=1]
+// Headless render of the dashboard: node tests/shots.js <projectId|/path> <WxH> <out.png> [select=<nodeId>] [view=outline] [scope=open|done|all] [mobile=1] [settle=<ms>] [interact=1]
 // Drives Chrome over the DevTools protocol (an open SSE stream keeps --virtual-time-budget from ever settling).
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -9,7 +9,7 @@ const path = require('path');
 const os = require('os');
 
 const [PID, SIZE, OUT, ...REST] = process.argv.slice(2);
-if (!PID || !SIZE || !OUT) { console.error('usage: shots.js <projectId|/path> <WxH> <out.png> [select=<id>] [view=outline] [mobile=1]'); process.exit(2); }
+if (!PID || !SIZE || !OUT) { console.error('usage: shots.js <projectId|/path> <WxH> <out.png> [select=<id>] [view=outline] [scope=open|done|all] [mobile=1] [settle=<ms>]'); process.exit(2); }
 const PATHNAME = PID.startsWith('/') ? PID : `/p/${encodeURIComponent(PID)}`;
 const opts = Object.fromEntries(REST.map((a) => a.split('=')));
 const [W, H] = SIZE.split('x').map(Number);
@@ -54,8 +54,57 @@ async function main() {
     if (mobile) await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
     await send('Page.navigate', { url: `${BASE}${PATHNAME}` });
     await sleep(2000);
-    if (opts.view) { await evaluate(`(document.querySelector('.seg button[data-view="${opts.view}"]')||{click(){}}).click(); 'ok'`); await sleep(300); }
-    if (opts.select) { await evaluate(`(document.querySelector('.card[data-id="${opts.select}"]')||{click(){}}).click(); 'ok'`); await sleep(500); }
+    if (opts.scope) { await evaluate(`window.taskmapUI && window.taskmapUI.setScope(${JSON.stringify(opts.scope)}); 'ok'`); await sleep(300); }
+    if (opts.view) { await evaluate(`window.taskmapUI && window.taskmapUI.setView(${JSON.stringify(opts.view)}); 'ok'`); await sleep(300); }
+    if (opts.select) { await evaluate(`window.taskmapUI && window.taskmapUI.select(${JSON.stringify(opts.select)}); 'ok'`); await sleep(500); }
+    await sleep(Number(opts.settle || 900)); // let the orbs settle and the camera finish its fit
+    // interact=1 drives the graph like a hand would and reports what changed.
+    let interaction = null;
+    if (opts.interact) {
+      const mouse = (type, x, y, extra) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', ...extra });
+      interaction = {};
+      const touch = (type, touchPoints) => send('Input.dispatchTouchEvent', { type, touchPoints });
+      if (mobile) {
+        const yaw0 = await evaluate('window.taskmapUI.scene.cam.yaw');
+        await touch('touchStart', [{ x: 60, y: H - 80 }]);
+        for (let i = 1; i <= 6; i++) await touch('touchMove', [{ x: 60 + i * 20, y: H - 80 - i * 4 }]);
+        await touch('touchEnd', []); await sleep(150);
+        interaction.touchYawDelta = Number(((await evaluate('window.taskmapUI.scene.cam.yaw')) - yaw0).toFixed(3));
+        const dist0 = await evaluate('window.taskmapUI.scene.cam.dist');
+        await touch('touchStart', [{ x: W / 2 - 40, y: H - 200 }, { x: W / 2 + 40, y: H - 200 }]);
+        for (let i = 1; i <= 5; i++) await touch('touchMove', [{ x: W / 2 - 40 - i * 15, y: H - 200 }, { x: W / 2 + 40 + i * 15, y: H - 200 }]);
+        await touch('touchEnd', []); await sleep(150);
+        interaction.pinchDistBefore = Math.round(dist0);
+        interaction.pinchDistAfter = Math.round(await evaluate('window.taskmapUI.scene.cam.dist'));
+      }
+      const target = mobile ? null : await evaluate(`(() => { const ui = window.taskmapUI; const id = ui.scene.nowId || [...ui.scene.entries.keys()][1]; const el = document.querySelector('.label[data-id="' + id + '"]'); if (!el) return null; const r = el.getBoundingClientRect(); return { id, x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      if (target) {
+        await mouse('mouseMoved', target.x, target.y, { button: 'none' }); await sleep(120);
+        interaction.hover = await evaluate('window.taskmapUI.state.hover');
+        await mouse('mousePressed', target.x, target.y, { clickCount: 1 }); await mouse('mouseReleased', target.x, target.y, { clickCount: 1 }); await sleep(300);
+        interaction.clicked = target.id;
+        interaction.selected = await evaluate('window.taskmapUI.state.selected');
+        interaction.panelTitle = await evaluate(`(document.querySelector('.p-title') || { textContent: '' }).textContent`);
+      }
+      if (mobile) { console.log('interaction: ' + JSON.stringify(interaction)); interaction = null; }
+      const yaw0 = interaction ? await evaluate('window.taskmapUI.scene.cam.yaw') : 0;
+      const gx = 60; const gy = H - 60;
+      if (!interaction) { /* touch already reported */ } else {
+      await mouse('mouseMoved', gx, gy, { button: 'none' }); await mouse('mousePressed', gx, gy, { clickCount: 1 });
+      for (let i = 1; i <= 6; i++) await mouse('mouseMoved', gx + i * 20, gy - i * 5, {});
+      await mouse('mouseReleased', gx + 120, gy - 30, { clickCount: 1 }); await sleep(150);
+      interaction.yawDelta = Number(((await evaluate('window.taskmapUI.scene.cam.yaw')) - yaw0).toFixed(3));
+      interaction.selectedAfterDrag = await evaluate('window.taskmapUI.state.selected');
+      const dist0 = await evaluate('window.taskmapUI.scene.cam.dist');
+      await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: W / 2, y: H / 2, deltaX: 0, deltaY: -240 }); await sleep(150);
+      interaction.distBefore = Math.round(dist0);
+      interaction.distAfterWheel = Math.round(await evaluate('window.taskmapUI.scene.want.dist'));
+      interaction.userMoved = await evaluate('window.taskmapUI.state.userMoved');
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'f', code: 'KeyF', text: 'f' }); await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'f', code: 'KeyF' }); await sleep(700);
+      interaction.userMovedAfterF = await evaluate('window.taskmapUI.state.userMoved');
+      interaction.distAfterF = Math.round(await evaluate('window.taskmapUI.scene.want.dist'));
+      }
+    }
     const info = await evaluate(`(() => {
       const q = (s) => document.querySelector(s);
       const t = (s) => (q(s) || { textContent: '' }).textContent.trim();
@@ -68,20 +117,24 @@ async function main() {
       };
       if (base.page === 'overview') return JSON.stringify({ ...base,
         live: t('#ov-live-text'), cards: n('.ov-card'), liveCards: n('.ov-card.is-live') });
+      const ui = window.taskmapUI || { scene: { entries: new Map(), cam: {} }, state: {} };
+      const labels = [...document.querySelectorAll('#labels .label')];
+      const shown = labels.filter((e) => parseFloat(e.style.opacity || '0') > 0.05);
+      const inFrame = (e) => { const r = e.getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; };
       return JSON.stringify({ ...base,
-        live: t('#live-text'), cards: n('#nodes .card'), rows: n('#outline .row'),
+        live: t('#live-text'), scope: ui.state.scope, view: q('#main').className,
+        orbs: ui.scene.entries.size, labels: labels.length, labelsShown: shown.length, labelsOffscreen: shown.filter((e) => !inFrame(e)).length,
+        rows: n('#outline .row'), doneRows: n('#donelist .dl-row'),
         progress: t('#progress-label'), waiting: n('#waiting-list li'), now: t('#now'),
-        view: q('#main').className,
-        transform: (q('#viewport') || { getAttribute: () => '' }).getAttribute('transform'),
+        cam: { dist: Math.round(ui.scene.cam.dist || 0), R: Math.round(ui.scene.R || 0) },
         main: [q('#main').clientWidth, q('#main').clientHeight],
-        minTitlePx: Math.min(...[...document.querySelectorAll('#nodes .card .title')].map((e) => e.getBoundingClientRect().height)),
-        clippedReasons: [...document.querySelectorAll('#nodes .card .reason')].filter((e) => e.scrollHeight > e.clientHeight + 1).length,
-        overflowTitles: [...document.querySelectorAll('#nodes .card .title')].filter((e) => e.scrollHeight > e.clientHeight + 1).length,
+        clippedReasons: [...document.querySelectorAll('.label .reason')].filter((e) => e.scrollHeight > e.clientHeight + 1).length,
       });
     })()`);
     const r = await send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(OUT, Buffer.from(r.result.data, 'base64'));
     console.log(`${OUT}: ${info}`);
+    if (interaction) console.log('interaction: ' + JSON.stringify(interaction));
     console.log('console: ' + (logs.length ? '\n' + logs.join('\n') : 'clean'));
     ws.close();
   } finally {
