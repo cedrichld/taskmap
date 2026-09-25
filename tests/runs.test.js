@@ -316,3 +316,24 @@ test('setEstimate puts the estimate on the session\'s open run with the work it 
   runs.onStop({ sessionId: 'S5', dir, ts: at(9) });
   assert.equal(runs.setEstimate(dir, sid, MIN, at(10)), null, 'a finished prompt takes no estimate');
 });
+
+test('a step closed in the same command as the estimate is part of it, not a pace sample', () => {
+  // Seen live: `taskmap eta 2h && taskmap done n265 --next` closed a step 58 ms after the
+  // estimate, which read as one step every 58 ms and cut the ETA to 1h.
+  const inRun = (m, extra) => Object.assign({ created: at(m), updated: at(m), sid: 'aaa' }, extra || {});
+  const t = T0 + 60 * MIN;
+  const iso = (ms) => new Date(ms).toISOString();
+  const map = mapOf([
+    ['m', 'n0', 'in_progress', inRun(1)],
+    ['a', 'm', 'done', inRun(1, { started_at: at(1), finished_at: iso(t + 58), updated: iso(t + 58), by: 'aaa' })],
+    ['b', 'm', 'in_progress', inRun(1, { started_at: iso(t + 100), updated: iso(t + 100), by: 'aaa' })],
+    ['c', 'm', 'pending', inRun(1)],
+    ['d', 'm', 'pending', inRun(1)],
+  ]);
+  const est = { ms: 120 * MIN, at: iso(t), left: 4 };
+  const r = one(map, run({ estimate: est }), { now: t + 1000 });
+  assert.deepEqual([r.pace_done, r.run_pace_ms, r.prior_ms], [0, null, 40 * MIN]);
+  assert.ok(Math.abs(r.eta_ms - 120 * MIN) < MIN, `ETA stays at the estimate (got ${r.eta_ms / MIN} min)`);
+  const P = require('../ui/prompts');
+  assert.equal(P.etaSource(r, t + 1000, r.eta_ms), 'chat');
+});

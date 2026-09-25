@@ -549,7 +549,8 @@ counts the map's average leaves per milestone (milestones finished without child
 1; clamped 1 to 8, default 3); a started one with no children counts 1. With an estimate,
 `prior_ms` is `estimate.ms / estimate.left` (or / total when it was given before the plan)
 and the run's own pace counts only steps finished after it, from `estimate.at`
-(`pace_from`, `pace_done`). With no estimate and nothing finished, there is no pace and
+(`pace_from`, `pace_done`). A step finished within 5 s of the estimate (`taskmap eta 2h &&
+taskmap done n5`) was part of it: not a pace sample, and not work the estimate still covers. With no estimate and nothing finished, there is no pace and
 no ETA ("ETA after 1st step"). `etaSource` marks the ETA: plain while it is within
 max(1 min, 3%) of the estimate counting down (`estimate.ms - (now - estimate.at)`), `~`
 once taskmap has moved it off that, `~~` when there is no estimate. `waiting` is blocked

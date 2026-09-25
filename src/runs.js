@@ -25,6 +25,7 @@ const STALE_MS = 2 * 3600 * 1000; // an unended run with no heartbeat and no act
 const GAP_MAX_MS = 45 * 60 * 1000; // a longer gap between two finished steps is a break, not a pace sample
 const GAP_MIN_MS = 5000;
 const DEFAULT_CHUNKS = 3; // an unplanned milestone is worth this many steps until the map says otherwise
+const ESTIMATE_GRACE_MS = 5000; // a step closed this soon after an estimate (`taskmap eta 2h && taskmap done n5`) was part of it
 
 function sidOf(sessionId) {
   return sessionId ? crypto.createHash('sha1').update(String(sessionId)).digest('hex').slice(0, 10) : null;
@@ -414,6 +415,7 @@ function summarizeRun(map, kids, run, all, { now, live, prior, chunks }) {
 
   let done = 0;
   let paceDone = 0;
+  let graceDone = 0; // closed with the estimate: neither a pace sample nor work it still covers
   let total = 0;
   let waiting = 0;
   let steps = 0;
@@ -436,8 +438,11 @@ function summarizeRun(map, kids, run, all, { now, live, prior, chunks }) {
       total += 1;
       const f = ms(n.finished_at);
       if (f !== null && f >= origin) {
-        paceDone += 1;
-        if (lastDone === null || f > lastDone) lastDone = f;
+        if (est && f - origin <= ESTIMATE_GRACE_MS) graceDone += 1;
+        else {
+          paceDone += 1;
+          if (lastDone === null || f > lastDone) lastDone = f;
+        }
       }
       continue;
     }
@@ -448,7 +453,7 @@ function summarizeRun(map, kids, run, all, { now, live, prior, chunks }) {
   }
 
   const runPace = paceDone && lastDone !== null ? (lastDone - origin) / paceDone : null;
-  const estPace = est ? est.ms / Math.max(1, est.left || total) : null;
+  const estPace = est ? est.ms / Math.max(1, (est.left || total) - graceDone) : null;
 
   const heartbeat = Boolean(live && sid && live.has(sid));
   let state;
