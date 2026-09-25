@@ -241,7 +241,7 @@ function newShareToken() {
 
 // ---------- session heartbeats ----------
 // One file per running `taskmap watch` (one per Claude Code session):
-// ~/.taskmap/sessions/<pid>.json  { project_id, cwd, pid, started, last_seen, opened }
+// ~/.taskmap/sessions/<pid>.json  { project_id, cwd, pid, sid, started, last_seen, opened }
 // The monitor rewrites it every SESSION_BEAT_MS and deletes it on exit; anything
 // older than SESSION_TTL_MS is a session that died without cleaning up.
 
@@ -292,6 +292,11 @@ function liveSessions({ ttlMs = SESSION_TTL_MS, prune = true } = {}) {
   return live.sort((a, b) => String(a.started || '').localeCompare(String(b.started || '')));
 }
 
+// Session hashes (runs.js sidOf) with a live heartbeat.
+function liveSids(opts) {
+  return new Set(liveSessions(opts).map((s) => s.sid).filter(Boolean));
+}
+
 // project id -> number of live sessions
 function liveSessionCounts(opts) {
   const counts = {};
@@ -303,7 +308,7 @@ function liveSessionCounts(opts) {
 }
 
 // Write (or refresh) this process's heartbeat, keeping fields we do not own.
-function writeSession({ pid = process.pid, project_id = null, cwd = null, started = null, opened = undefined } = {}) {
+function writeSession({ pid = process.pid, project_id = null, cwd = null, sid = null, started = null, opened = undefined } = {}) {
   const file = sessionFile(pid);
   let prev = {};
   try {
@@ -315,6 +320,7 @@ function writeSession({ pid = process.pid, project_id = null, cwd = null, starte
     project_id: project_id === null ? prev.project_id || null : project_id,
     cwd: cwd === null ? prev.cwd || null : cwd,
     pid,
+    sid: sid === null ? prev.sid || null : sid,
     started: started || prev.started || now(),
     last_seen: now(),
     opened: opened === undefined ? Boolean(prev.opened) : Boolean(opened),
@@ -579,11 +585,12 @@ function installMap(projectDir, map) {
 }
 
 // The one write path. fn(map, ctx) mutates the map and returns a result.
-function mutate(projectDir, actor, fn) {
+// sid (a short session hash, see runs.js) tags the nodes this call adds or moves.
+function mutate(projectDir, actor, fn, { sid = null } = {}) {
   const dir = dataDir(projectDir);
   const out = withLock(path.join(dir, 'map.lock'), () => {
     const map = readMap(projectDir);
-    const ctx = { now: now(), actor, events: [], inbox: [], touched: new Set(), warnings: [] };
+    const ctx = { now: now(), actor, sid, events: [], inbox: [], touched: new Set(), warnings: [] };
     const result = fn(map, ctx);
     map.version = (map.version || 0) + 1;
     map.updated = ctx.now;
@@ -830,6 +837,7 @@ function newNode(map, ctx, opts) {
     started_at: null,
     finished_at: null,
   };
+  if (ctx.sid) node.sid = ctx.sid;
   map.nodes[id] = node;
   ctx.events.push({ type: 'add', node: id, detail: { title, parent: p.id, source: node.source } });
   if (node.source === 'user') {
@@ -850,6 +858,7 @@ function setStatus(map, ctx, id, status, { reason = null, note = null, override 
   const from = n.status;
   n.status = status;
   n.status_reason = needsReason ? reason : null;
+  if (ctx.sid) n.by = ctx.sid;
   if (status === 'in_progress') {
     if (!n.started_at) n.started_at = ctx.now;
     n.finished_at = null;
@@ -858,6 +867,7 @@ function setStatus(map, ctx, id, status, { reason = null, note = null, override 
       if (!a || a.id === map.root || a.status !== 'pending') continue;
       a.status = 'in_progress';
       a.started_at = a.started_at || ctx.now;
+      if (ctx.sid) a.by = ctx.sid;
       ctx.touched.add(a.id);
       ctx.events.push({ type: 'start', node: a.id, detail: { from: 'pending', to: 'in_progress', via: id } });
     }
@@ -1076,6 +1086,7 @@ module.exports = {
   isLiveSession,
   liveSessions,
   liveSessionCounts,
+  liveSids,
   writeSession,
   removeSession,
   sessionOpened,

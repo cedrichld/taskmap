@@ -84,6 +84,7 @@ const state = {
   selected: null, hover: null, collapsed: new Set(), expanded: new Set(), view: 'map', scope: 'open',
   es: null, retryMs: 1000, retryTimer: null, everConnected: false,
   userMoved: false, drafts: {}, inlineMode: null, orbit: true,
+  runs: [], skew: 0, pinnedRun: null,
 };
 const projPath = () => `/api/projects/${encodeURIComponent(state.pid)}`;
 const projectPath = (id) => `/p/${encodeURIComponent(id)}`;
@@ -796,8 +797,9 @@ function bindGraph() {
     ptr.active.delete(e.pointerId);
     if (!ptr.active.size) {
       graphEl.classList.remove('dragging');
-      if (!ptr.moved && e.type === 'pointerup' && ptr.hit) {
-        if (ptr.badge) toggleCollapse(ptr.hit); else clickNode(ptr.hit);
+      if (!ptr.moved && e.type === 'pointerup') {
+        if (!ptr.hit) select(null); // a tap on empty space puts the panel back to the key
+        else if (ptr.badge) toggleCollapse(ptr.hit); else clickNode(ptr.hit);
       }
       ptr.moved = false;
       ptr.hit = null;
@@ -1089,10 +1091,11 @@ function cmBestLayout(tree) {
 }
 function bindCardMap() {
   // Click opens what is folded or selects; the count pill folds and unfolds; hover shows cross-links.
+  // A click on empty space (never the end of a pan: d3-zoom swallows that one) clears the selection.
   const el = $('#cardmap');
   el.addEventListener('click', (e) => {
     const c = e.target.closest('.card');
-    if (!c) return;
+    if (!c) { select(null); return; }
     if (e.target.closest('.badge')) { toggleCollapse(c.dataset.id); return; }
     clickNode(c.dataset.id);
   });
@@ -1163,7 +1166,7 @@ function renderHeader() {
   const m = state.map;
   $('#project-goal').textContent = m.goal || '';
   $('#project-goal').title = m.goal || '';
-  document.title = `${m.name || state.pid} · taskmap`;
+  renderRuns();
   const p = progressOf(rootId());
   $('#progress-bar').style.transform = `scaleX(${p.total ? p.done / p.total : 0})`;
   $('#progress-label').textContent = `${p.done}/${p.total}`;
@@ -1222,6 +1225,85 @@ function notice(msg) {
   const el = $('#notice');
   el.textContent = msg || '';
   el.hidden = !msg;
+}
+
+// ---------- prompts: how far each prompt has got, and when it should be done ----------
+// The server sends a summary per prompt (src/runs.js) whenever the map or runs.json
+// changes; in between, a 30 s tick moves the numbers with the same formula, and stops
+// while the tab is hidden. No polling.
+const RUN_TICK_MS = 30000;
+const PR = window.Prompts;
+const serverNow = () => Date.now() + state.skew;
+function shownRuns() {
+  const list = state.runs;
+  if (state.pinnedRun) {
+    const r = list.find((x) => x.id === state.pinnedRun);
+    if (r) return [r];
+    state.pinnedRun = null;
+  }
+  const live = list.filter((r) => r.state === 'running');
+  return live.length ? live.slice(0, 3) : list.slice(0, 1);
+}
+function runRowHtml(r, now, label) {
+  const { cls, big, eta, small, pct } = PR.words(r, now);
+  const fill = r.state === 'done' ? 1 : pct || 0;
+  const tip = `${r.prompt}\n${r.done} of ${r.steps} steps done${r.total > r.steps ? '; milestones not broken down yet count as several' : ''} · started ${fmtClock(r.started)}${r.follow_ups ? ` · ${r.follow_ups} more message${r.follow_ups > 1 ? 's' : ''} while it ran` : ''}`;
+  // Six cells per prompt, laid out by the grid on #run-rows so stacked prompts line up.
+  return `<div class="run st-${cls}" data-run-row="${esc(r.id)}">`
+    + `<span class="k">${esc(label)}</span>`
+    + `<span class="run-p" title="${esc(tip)}">${esc(r.prompt || '(no text)')}</span>`
+    + `<span class="run-bar" title="${esc(tip)}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(fill * 100)}"><i style="transform:scaleX(${fill.toFixed(4)})"></i></span>`
+    + `<span class="run-big mono">${esc(big)}</span>`
+    + `<span class="run-eta">${esc(eta || '')}</span>`
+    + `<span class="run-small">${esc(small)}${state.pinnedRun ? ' <button type="button" class="linkish" data-run-live>Back to live</button>' : ''}</span>`
+    + '</div>';
+}
+function renderRuns() {
+  const box = $('#prompts');
+  const list = state.runs;
+  box.hidden = !list.length;
+  $('#run-count').textContent = list.length > 1 ? String(list.length) : '';
+  const now = serverNow();
+  const shown = shownRuns();
+  const latest = list[0];
+  const html = shown.map((r) => runRowHtml(r, now, state.pinnedRun && r !== latest ? 'Earlier prompt' : shown.length > 1 ? 'Prompt' : r.state === 'running' ? 'This prompt' : 'Last prompt')).join('');
+  const rows = $('#run-rows');
+  if (rows._sig !== html) { rows.innerHTML = html; rows._sig = html; }
+  if (!$('#run-menu').hidden) renderRunMenu();
+  // A glance at the tab strip answers "is it done yet?".
+  const live = shown.filter((r) => r.state === 'running' && r.total);
+  const name = state.map ? state.map.name || state.pid : state.pid;
+  if (live.length) {
+    const x = PR.extrapolate(live[0], now);
+    document.title = `${PR.pctText(x.pct)}${x.eta_ms !== null ? ` · ${PR.fmtDur(x.eta_ms)}` : ''} · ${name}`;
+  } else document.title = `${name} · taskmap`;
+}
+function renderRunMenu() {
+  const now = serverNow();
+  $('#run-menu').innerHTML = state.runs.map((r) => {
+    const { cls, big, eta, small } = PR.words(r, now);
+    const on = shownRuns().includes(r);
+    return `<button type="button" role="menuitem" class="run-item st-${cls}${on ? ' on' : ''}" data-run="${esc(r.id)}" title="${esc(r.prompt)}">`
+      + `<i class="dot"></i><span class="p">${esc(r.prompt || '(no text)')}</span>`
+      + `<span class="r mono">${esc(r.state === 'done' ? `done · ${PR.fmtDur(r.elapsed_ms)}` : r.state === 'running' ? [big, eta].filter(Boolean).join(' · ') : `${big} · ${small.split(' · ')[0]}`)}</span>`
+      + `<span class="w mono">${esc(fmtDay(r.started) === fmtDay(new Date(now).toISOString()) ? fmtClock(r.started) : fmtDay(r.started))}</span>`
+      + '</button>';
+  }).join('');
+}
+function openRunMenu(open) {
+  const menu = $('#run-menu');
+  menu.hidden = !open;
+  $('#run-pick').setAttribute('aria-expanded', String(open));
+  if (open) renderRunMenu();
+}
+function setRuns(runs, now) {
+  if (!Array.isArray(runs)) return;
+  state.runs = runs;
+  if (Number.isFinite(now)) state.skew = now - Date.now();
+  renderRuns();
+}
+function tickRuns() {
+  if (!document.hidden && state.runs.length) renderRuns();
 }
 
 // ---------- side panel ----------
@@ -1303,6 +1385,7 @@ function emptyPanelHtml() {
       <span class="k">Shortcuts</span>
       <ul class="keys">
         <li><kbd>click</kbd>Open a task and its branch; again to fold it</li>
+        <li><kbd>click</kbd>Empty space: back to this key</li>
         <li><kbd>drag</kbd>${state.view === 'orbs' ? 'Turn' : 'Move'} the map; scroll or pinch to zoom</li>
         <li><kbd>f</kbd>Fit to the window${state.view === 'orbs' ? '; <kbd>o</kbd> pauses the turning' : ''}</li>
         <li><kbd>1</kbd>–<kbd>4</kbd>Map, Graph, 3D, List</li>
@@ -1645,6 +1728,7 @@ async function loadProject() {
   try {
     const r = await api('GET', projPath());
     notice('');
+    setRuns(r.runs, r.now);
     setMap(r.map, r.log);
   } catch (e) {
     notice(`Could not load the project: ${e.message}`);
@@ -1672,7 +1756,7 @@ function connect() {
     if (state.es !== es) return;
     let msg;
     try { msg = JSON.parse(ev.data); } catch (e) { return; }
-    if (msg && msg.type === 'map') setMap(msg.map, msg.log);
+    if (msg && msg.type === 'map') { setRuns(msg.runs, msg.now); setMap(msg.map, msg.log); }
   };
   es.onerror = () => {
     es.close();
@@ -1695,6 +1779,10 @@ function switchProject(id) {
   state.retryMs = 1000;
   state.userMoved = false;
   state.drafts = {};
+  state.runs = [];
+  state.pinnedRun = null;
+  openRunMenu(false);
+  $('#prompts').hidden = true;
   state.selected = ss.get(`taskmap:selected:${id}`, null);
   const storedCollapsed = ss.get(`taskmap:collapsed:${id}`, null);
   state.autoCollapse = storedCollapsed === null;
@@ -1750,10 +1838,11 @@ function bindEvents() {
   const outline = $('#outline');
   outline.addEventListener('click', (e) => {
     const row = e.target.closest('.row');
-    if (!row) return;
-    if (e.target.closest('.chev') || e.target.closest('.badge')) toggleCollapse(row.dataset.id);
-    else if (e.target.closest('.card')) clickNode(row.dataset.id);
+    if (row && (e.target.closest('.chev') || e.target.closest('.badge'))) toggleCollapse(row.dataset.id);
+    else if (row && e.target.closest('.card')) clickNode(row.dataset.id);
+    else select(null);
   });
+  $('#donelist').addEventListener('click', (e) => { if (!e.target.closest('[data-sel], a, button')) select(null); });
 
   // Side panel, strip and activity feed.
   $('#fb-send').addEventListener('click', sendFeedback);
@@ -1777,7 +1866,21 @@ function bindEvents() {
   });
   $('#inline-form').addEventListener('submit', submitInline);
   $('#inline-cancel').addEventListener('click', closeInline);
+  $('#run-pick').addEventListener('click', () => openRunMenu($('#run-menu').hidden));
+  $('#prompts').addEventListener('click', (e) => {
+    const item = e.target.closest('[data-run]');
+    if (item) {
+      const r = state.runs.find((x) => x.id === item.dataset.run);
+      // Picking a running prompt goes back to following whatever is live.
+      state.pinnedRun = r && r.state !== 'running' && r !== state.runs[0] ? r.id : null;
+      openRunMenu(false);
+      renderRuns();
+      return;
+    }
+    if (e.target.closest('[data-run-live]')) { state.pinnedRun = null; renderRuns(); }
+  });
   document.addEventListener('click', (e) => {
+    if (!$('#run-menu').hidden && !e.target.closest('.run-side')) openRunMenu(false);
     const r = e.target.closest('[data-reply]');
     if (r && nodeOf(r.dataset.reply)) { replyTo(r.dataset.reply); return; }
     const a = e.target.closest('[data-sel]');
@@ -1791,7 +1894,8 @@ function bindEvents() {
     const t = e.target;
     const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
     if (e.key === 'Escape') {
-      if (!$('#add-form').hidden) toggleAddForm(false);
+      if (!$('#run-menu').hidden) openRunMenu(false);
+      else if (!$('#add-form').hidden) toggleAddForm(false);
       else if (!$('#inline-form').hidden) closeInline();
       else if (!typing) select(null);
       return;
@@ -1821,6 +1925,8 @@ function bindEvents() {
   window.addEventListener('resize', () => { syncChromeTop(); resizeCanvas(); if (!state.userMoved) fit(false); });
   syncChromeTop();
   setInterval(tickUpdated, 1000);
+  setInterval(tickRuns, RUN_TICK_MS);
+  document.addEventListener('visibilitychange', tickRuns);
 }
 
 // ---------- boot ----------

@@ -14,6 +14,8 @@ Version 1 (`schema: 1`). This file is the contract between `src/store.js`,
 | `log.jsonl`   | Append-only, one line per mutation (CLI and UI).               |
 | `inbox.jsonl` | Append-only, the subset of log events the user originated.     |
 | `map.lock`    | Lock file, exists only while a write is in progress.           |
+| `runs.json`   | One run per user prompt (turn), newest last, at most 30; see section 9. |
+| `runs.lock`   | Lock file for `runs.json`.                                     |
 
 `taskmap init` adds `.taskmap/` to `<project>/.gitignore` unless `--track`
 (only when the directory is inside a git work tree).
@@ -27,6 +29,7 @@ Version 1 (`schema: 1`). This file is the contract between `src/store.js`,
 | `server.log`    | stdout+stderr of the detached server.                       |
 | `config.json`   | Optional. `{ "prompt_reminder": false }` (phase 2 switch).  |
 | `sessions/<pid>.json` | One per running `taskmap watch`; see below.           |
+| `prompts/<sid>.json` | The session's latest prompt: `{ sid, prompt, started, ended, last, dirs }`; see section 9. |
 | `share.json`    | `{ token, created, url, pid }`. Exists only while a share runs. |
 | `share.pid`, `share.log` | The detached `cloudflared` process and its output.  |
 | `demo/`         | The demo project created by `taskmap demo`.                 |
@@ -119,6 +122,8 @@ Timestamps are ISO 8601 UTC strings (`2026-08-21T14:03:11.412Z`).
 | `feedback`      | `[{ts, text, read, kind}]`                                 | User-originated events on this node, see below. |
 | `started_at`    | ISO string or `null`                                       | Set on first `start`. |
 | `finished_at`   | ISO string or `null`                                       | Set on `done`, cleared on `reopen`. |
+| `sid`           | string, optional                                           | Session that added the node (section 9). |
+| `by`            | string, optional                                           | Session that last changed its status, auto-started parents included. |
 
 Depth: root is depth 0, milestones depth 1, chunks depth 2, steps depth 3.
 Creating or moving a node to depth 4 or more is rejected unless `--force`
@@ -369,7 +374,7 @@ project or node, or project directory missing), 500 (unexpected).
 | GET | `/api/health` | | `{ "ok": true, "app": "taskmap", "version": "0.1.0", "pid": 123, "port": 4242 }` |
 | GET | `/api/projects` | | `{ "projects": [ { "id", "name", "path", "goal", "updated", "exists", "live", "sessions", "clients", "progress": { "done", "total" } \| null, "in_progress": n, "in_progress_titles": [..], "focus": { "id", "title", "path": [milestone titles, root excluded], "note": last note text, "since": started_at } \| null, "blocked": b, "unread": k } ] }` newest first. `focus` is the in-progress leaf (or the first in-progress node), what the dashboard's Now banner and the overview card show. |
 | GET | `/api/clients` | | `{ "ok": true, "total": n, "projects": { "<id>": n }, "sessions": { "<id>": n }, "session_ttl_ms": 60000 }` |
-| GET | `/api/projects/:id` | | `{ "project": { "id", "name", "path", "updated", "exists", "url" }, "map": <map.json>, "log": [ last 100 log lines, oldest first ] }` |
+| GET | `/api/projects/:id` | | `{ "project": { "id", "name", "path", "updated", "exists", "url" }, "map": <map.json>, "log": [ last 100 log lines, oldest first ], "runs": [ run summaries, newest first ], "now": server ms }` |
 | GET | `/api/projects/:id/events` | | SSE, see below |
 | POST | `/api/projects/:id/feedback` | `{ "node": "n12", "text": "…" }` | `{ "ok": true, "node": <node> }` |
 | POST | `/api/projects/:id/nodes` | `{ "parent": "n0", "title": "…", "what"?: "…", "why"?: "…" }` | `201 { "ok": true, "id": "n19", "node": <node> }` |
@@ -394,13 +399,13 @@ updated project that still exists on disk and says so.
 ```
 retry: 2000
 
-data: {"type":"map","map":{…},"log":[…]}
+data: {"type":"map","map":{…},"log":[…],"runs":[…],"now":1790310929331}
 
 data: {"type":"ping"}
 ```
 
 - A `map` message is sent immediately on connect and again whenever
-  `map.json` changes (`map.version` differs or the file's mtime/size changed).
+  `map.json` or `runs.json` changes (mtime or size).
 - A `ping` message every 20 s keeps proxies and the browser happy.
 - The server polls the mtime of every registered `map.json` every 300 ms
   (`fs.watch` is not used: atomic renames and editors make it unreliable).
@@ -491,3 +496,44 @@ data: {"type":"ping"}
   `Stop` blocks once via `{ "decision": "block", "reason": … }` unless
   `stop_hook_active` is true; `UserPromptSubmit` prints one line of plain
   stdout when enabled in `~/.taskmap/config.json`.
+
+## 9. Prompt runs: progress and ETA per prompt (`src/runs.js`)
+
+A run is one user turn: it starts on `UserPromptSubmit` and ends on the `Stop` that
+lets the turn finish. The hooks write it and print nothing, so it costs no tokens;
+the CLI only tags nodes. `sid` is the first 10 hex chars of sha1(session id): hooks
+read `session_id` from stdin, the CLI and `taskmap watch` read `CLAUDE_CODE_SESSION_ID`.
+
+- `runs.json`: `{ "runs": [ { "id": "r3", "sid", "prompt": first 160 chars, "started",
+  "ended": null | ISO, "open": [leaf ids open when it started], "follow_ups": n } ] }`.
+- A prompt that arrives while the session's run is open (no `Stop` since) is a message
+  typed mid-turn: it joins that run (`follow_ups += 1`) and the first prompt keeps the
+  bar. Exception: the transcript (`transcript_path`) shows `[Request interrupted by
+  user]` after the last prompt, or 12 h passed; then the old run ends and a new one starts.
+- A notification delivered as a prompt (`<task-notification>`, `<system-reminder>`,
+  `<bash-notification>`: agents finishing, monitors) never starts a run: it resumes the
+  session's latest run (`ended` back to null), since the session is carrying on with it.
+- `Stop` ends the run only when no leaf is in progress. After its one block, leaves
+  still in progress mean agents are working on them, so the run stays open.
+- A map that did not exist when the prompt arrived joins it on the CLI's first write
+  (`taskmap init` included), via `~/.taskmap/prompts/<sid>.json`.
+
+Scope of a run, among the current leaves: added during it by its session, a session
+with no overlapping run of its own (subagents, workflow agents), or the user; left
+open by an earlier prompt, only once this run changed the status of one of those
+(a new request or a quick question does not inherit the backlog); or started,
+finished or reopened during it by its session. Steps a concurrent run's session
+touched are that run's.
+
+Summary (`runs.summarize`, sent to the UI): `{ id, prompt, follow_ups, started, ended,
+state: running|done|paused|stopped, steps, done, total, waiting, pace_ms, base,
+elapsed_ms, pct, eta_ms }`. A leaf counts 1; an open milestone with no children yet
+counts the map's average leaves per milestone (1 to 8, default 3). `waiting` is blocked
+weight. `pace_ms` blends this run's (time to last finished step / steps done) with the
+project's median gap between finished steps (5 s to 45 min gaps, at least 3; else the
+median over every project), the prior weighing as 2 steps. `ui/prompts.js` holds the
+shared formula: the step under way gets credit `min(0.8, (now - base) / pace)`,
+`eta = (total - done - waiting - credit) * pace`. The project page reruns it every 30 s
+(not while hidden); the overview's 2 s poll gets fresh numbers. A run with no
+heartbeat for its session and no activity for 2 h is `stopped`.
+

@@ -37,6 +37,13 @@
     <button type="button" id="fit-btn" title="Fit the map to the window (f)">Fit</button>
     <button type="button" id="add-top-btn" class="primary" aria-expanded="false" title="Add a high-level task to the map">Add task</button>
   </div>
+  <div id="prompts" class="prompts" hidden>
+    <div id="run-rows" class="run-rows"></div>
+    <div class="run-side">
+      <button type="button" id="run-pick" class="run-pick" aria-haspopup="true" aria-expanded="false" title="Every recent prompt on this project">Prompts<span class="n mono" id="run-count"></span></button>
+      <div id="run-menu" class="run-menu" role="menu" hidden></div>
+    </div>
+  </div>
   <form id="add-form" class="add-form" hidden>
     <input id="add-title" placeholder="Title" maxlength="200" autocomplete="off" required>
     <input id="add-what" placeholder="What (optional)" autocomplete="off">
@@ -135,6 +142,7 @@
 
 <script src="/vendor/d3.v7.min.js"></script>
 <script src="/constellation.js"></script>
+<script src="/prompts.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

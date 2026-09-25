@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// Headless render of the dashboard: node tests/shots.js <projectId|/path> <WxH> <out.png> [select=<nodeId>] [view=map|graph|orbs|outline] [scope=open|done|all] [mobile=1] [settle=<ms>] [interact=1] [click=<nodeId> clicks=<n>]
+// Headless render of the dashboard: node tests/shots.js <projectId|/path> <WxH> <out.png> [select=<nodeId>] [view=map|graph|orbs|outline] [scope=open|done|all] [mobile=1] [settle=<ms>] [interact=1] [click=<nodeId> clicks=<n>] [js=<expression>] [at=<x,y>]
 // Drives Chrome over the DevTools protocol (an open SSE stream keeps --virtual-time-budget from ever settling).
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -11,7 +11,7 @@ const os = require('os');
 const [PID, SIZE, OUT, ...REST] = process.argv.slice(2);
 if (!PID || !SIZE || !OUT) { console.error('usage: shots.js <projectId|/path> <WxH> <out.png> [select=<id>] [view=outline] [scope=open|done|all] [mobile=1] [settle=<ms>]'); process.exit(2); }
 const PATHNAME = PID.startsWith('/') ? PID : `/p/${encodeURIComponent(PID)}`;
-const opts = Object.fromEntries(REST.map((a) => a.split('=')));
+const opts = Object.fromEntries(REST.map((a) => [a.slice(0, a.indexOf('=')), a.slice(a.indexOf('=') + 1)]));
 const [W, H] = SIZE.split('x').map(Number);
 const PORT = 9400 + Math.floor(Math.random() * 400);
 const BASE = `http://127.0.0.1:${process.env.TASKMAP_PORT || 4242}`;
@@ -57,6 +57,7 @@ async function main() {
     if (opts.scope) { await evaluate(`window.taskmapUI && window.taskmapUI.setScope(${JSON.stringify(opts.scope)}); 'ok'`); await sleep(300); }
     if (opts.view) { await evaluate(`window.taskmapUI && window.taskmapUI.setView(${JSON.stringify(opts.view)}); 'ok'`); await sleep(300); }
     if (opts.select) { await evaluate(`window.taskmapUI && window.taskmapUI.select(${JSON.stringify(opts.select)}); 'ok'`); await sleep(500); }
+    if (opts.js) { await evaluate(`(() => { ${opts.js}; return 'ok'; })()`); await sleep(300); } // e.g. js=document.querySelector('#run-pick').click()
     await sleep(Number(opts.settle || 900)); // let the orbs settle and the camera finish its fit
     // click=<id> clicks that task where it is drawn (orb or card) and reports what opened.
     if (opts.click) {
@@ -78,6 +79,15 @@ async function main() {
         clicks.push({ before, after: await count(), selected: await evaluate('window.taskmapUI.state.selected') });
       }
       console.log('click: ' + JSON.stringify(clicks));
+    }
+    // at=x,y clicks that point (empty space, usually) and reports the selection after.
+    if (opts.at) {
+      const [x, y] = opts.at.split(',').map(Number);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' });
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+      await sleep(400);
+      console.log('at: ' + JSON.stringify({ selected: await evaluate('window.taskmapUI.state.selected') }));
     }
     // interact=1 drives the graph like a hand would and reports what changed.
     let interaction = null;

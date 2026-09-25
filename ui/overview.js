@@ -2,7 +2,9 @@
 /* taskmap overview — one card per registered project. Contract: docs/SPEC.md sections 6, 7. */
 
 const $ = (sel, el) => (el || document).querySelector(sel);
+const P = window.Prompts;
 const POLL_MS = 2000;
+const RECENT_MS = 2 * 3600 * 1000; // a finished prompt stays on its card this long
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -19,7 +21,27 @@ function ago(iso) {
   return d < 30 ? `${d}d ago` : new Date(iso).toISOString().slice(0, 10);
 }
 
-const state = { projects: [], failures: 0 };
+const state = { projects: [], failures: 0, skew: 0 };
+
+// The card's prompt: running, or finished within the last two hours ("is it done yet?").
+function runHtml(p) {
+  const r = p.run;
+  if (!r || !p.exists) return '';
+  const now = Date.now() + state.skew;
+  if (r.state !== 'running' && now - Date.parse(r.ended || r.started) > RECENT_MS) return '';
+  const w = P.words(r, now);
+  const fill = r.state === 'done' ? 1 : w.pct || 0;
+  const more = p.running > 1 ? `<span class="muted ov-run-more">+${p.running - 1} more running</span>` : '';
+  const label = r.state === 'running' ? 'This prompt' : 'Last prompt';
+  return `<div class="ov-run st-${w.cls}" title="${esc(r.prompt)}">
+      <p class="ov-run-p"><span class="k">${label}</span> ${esc(r.prompt || '(no text)')}</p>
+      <div class="ov-run-row">
+        <span class="ov-bar"><i style="transform:scaleX(${fill.toFixed(4)})"></i></span>
+        <span class="ov-run-big mono">${esc(w.big)}</span>
+        ${w.eta ? `<span class="ov-run-eta">${esc(w.eta)}</span>` : `<span class="muted">${esc(w.small)}</span>`}${more}
+      </div>
+    </div>`;
+}
 
 function setLive(kind, text) {
   const el = $('#ov-live');
@@ -78,6 +100,7 @@ function cardHtml(p) {
       </div>
       <p class="ov-goal" title="${esc(p.goal || '')}">${esc(p.goal || '')}</p>
       ${nowHtml}
+      ${runHtml(p)}
       <span class="ov-spacer"></span>
       <div class="ov-bar" role="img" aria-label="${pr.done} of ${pr.total} leaves done"><i style="transform:scaleX(${pr.total ? pr.done / pr.total : 0})"></i></div>
       <div class="ov-foot">
@@ -101,7 +124,11 @@ function render() {
   }
   $('#ov-empty').hidden = list.length > 0;
   const live = list.filter((p) => p.live).length;
-  document.title = live ? `(${live}) taskmap — all projects` : 'taskmap — all projects';
+  // The soonest running prompt goes in the tab title.
+  const now = Date.now() + state.skew;
+  const etas = list.filter((p) => p.run && p.run.state === 'running').map((p) => P.extrapolate(p.run, now).eta_ms).filter((e) => e !== null);
+  const soonest = etas.length ? ` · next done ${P.fmtDur(Math.min(...etas))}` : '';
+  document.title = live ? `(${live}) taskmap${soonest} — all projects` : 'taskmap — all projects';
 }
 
 async function poll() {
@@ -110,6 +137,7 @@ async function poll() {
     if (!res.ok) throw new Error(`The server answered ${res.status}.`);
     const data = await res.json();
     state.projects = data.projects || [];
+    if (Number.isFinite(data.now)) state.skew = data.now - Date.now();
     state.failures = 0;
     notice('');
     const live = state.projects.filter((p) => p.live).length;

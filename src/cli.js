@@ -6,6 +6,7 @@ const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
 const store = require('./store');
+const runs = require('./runs');
 const { UserError } = store;
 
 const BOOL_FLAGS = new Set(['track', 'open', 'all', 'peek', 'json', 'force', 'batch', 'ensure', 'stop', 'restart', 'foreground', 'help', 'version', 'quiet', 'if-needed', 'next']);
@@ -84,7 +85,9 @@ function loadMap(flags) {
 
 function doMutate(flags, fn) {
   const dir = projectDir(flags);
-  const r = store.mutate(dir, 'cli', fn);
+  const sid = runs.envSid();
+  runs.ensureRun(dir, sid);
+  const r = store.mutate(dir, 'cli', fn, { sid });
   for (const w of r.warnings) warn(w);
   return r;
 }
@@ -307,6 +310,7 @@ async function cmdInit({ pos, flags }) {
   if (!name) throw new UserError('init needs a name: taskmap init "<name>" --goal "<one sentence>"');
   if (!flags.goal) throw new UserError('init needs --goal "<one sentence>".');
   const map = store.initProject(cwd, { name, goal: flags.goal, track: Boolean(flags.track) });
+  runs.ensureRun(cwd);
   await ensureServer({ quiet: true });
   await openIfNeeded(map.id);
   out(`n0  ${map.name}  ${store.projectUrl(map.id)}`);
@@ -773,26 +777,34 @@ async function hookSessionStart(input, cwd, flags) {
 }
 
 // Stop: block once while a leaf is still in progress; stop_hook_active is the loop guard.
+// When the turn really ends, the prompt's run ends with it (silently) — unless leaves are
+// still in progress after that one block, which means agents are still on them.
 function hookStop(input, cwd, flags) {
-  if (input.stop_hook_active) return;
   const dir = resolveQuiet(cwd, flags);
-  if (!dir) return;
-  const map = store.readMap(dir);
-  const leaves = store.inProgressNodes(map).filter((n) => store.isLeaf(map, n.id));
-  if (!leaves.length) return;
-  const list = leaves.map((n) => `${n.id} "${n.title}"`).join(', ');
-  out(JSON.stringify({
-    decision: 'block',
-    reason: `taskmap: ${list} still in progress. Before ending: taskmap done <id> --note ".." --state "State: .. Next: .." if finished; taskmap block <id> --reason "waiting on user: .." if it waits on the user; else taskmap reopen <id> --note "<where you stopped>".`,
-  }));
+  if (dir) {
+    const map = store.readMap(dir);
+    const leaves = store.inProgressNodes(map).filter((n) => store.isLeaf(map, n.id));
+    if (leaves.length && !input.stop_hook_active) {
+      const list = leaves.map((n) => `${n.id} "${n.title}"`).join(', ');
+      out(JSON.stringify({
+        decision: 'block',
+        reason: `taskmap: ${list} still in progress. Before ending: taskmap done <id> --note ".." --state "State: .. Next: .." if finished; taskmap block <id> --reason "waiting on user: .." if it waits on the user; else taskmap reopen <id> --note "<where you stopped>".`,
+      }));
+      return;
+    }
+    if (leaves.length) return;
+  }
+  runs.onStop({ sessionId: input.session_id, dir });
 }
 
-// UserPromptSubmit: off unless ~/.taskmap/config.json has prompt_reminder: true.
+// UserPromptSubmit: starts the prompt's run (silently, for the dashboard's progress
+// bar). The reminder is off unless ~/.taskmap/config.json has prompt_reminder: true.
 function hookPrompt(input, cwd, flags) {
+  const dir = resolveQuiet(cwd, flags);
+  runs.onPrompt({ sessionId: input.session_id, prompt: input.prompt, dir, transcriptPath: input.transcript_path });
   if (!readConfig().prompt_reminder) return;
   const prompt = String(input.prompt || '');
   if (prompt.length <= 400 || /^\s*\//.test(prompt)) return;
-  const dir = resolveQuiet(cwd, flags);
   if (dir) {
     const map = store.readMap(dir);
     if (store.inProgressNodes(map).some((n) => store.isLeaf(map, n.id))) return;

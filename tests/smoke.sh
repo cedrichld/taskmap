@@ -397,6 +397,23 @@ node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$PWD/.
 [ -e .taskmap/map.lock ] && bad "lock file left behind" || ok "no lock file left behind"
 equals "no temp files left" "$(ls -A .taskmap | grep -c '\.tmp$')" "0"
 
+# ---- prompt runs: the dashboard's progress bar and ETA, at no token cost ----
+SID=$(node -e 'console.log(require(process.argv[1]).sidOf("S-1"))' "$HERE/src/runs.js")
+equals "prompt hook prints nothing" "$(hook prompt "{\"session_id\":\"S-1\",\"prompt\":\"Add the  ghosts\",\"cwd\":\"$PWD\"}")" ""
+runs=$(cat .taskmap/runs.json)
+contains "a prompt opens a run" "$runs" '"prompt": "Add the ghosts"'
+contains "the run belongs to the session" "$runs" "\"sid\": \"$SID\""
+new=$(CLAUDE_CODE_SESSION_ID=S-1 "$TM" add "Chase the player" --parent n1 2>/dev/null)
+contains "a node added in the prompt carries its session" "$("$TM" show "$new" >/dev/null; node -e 'const m=require(process.argv[1]);console.log(JSON.stringify(m.nodes[process.argv[2]]))' "$PWD/.taskmap/map.json" "$new")" "\"sid\":\"$SID\""
+sleep 0.5
+api=$(curl -s "$URL/api/projects/$ID")
+contains "the API sends the prompt's progress" "$api" '"prompt":"Add the ghosts","follow_ups":0'
+contains "a new request counts only its own steps" "$api" '"state":"running","steps":1'
+contains "the overview carries it too" "$(curl -s "$URL/api/projects")" '"prompt":"Add the ghosts","follow_ups":0'
+equals "stop hook prints nothing" "$(hook stop "{\"session_id\":\"S-1\",\"stop_hook_active\":false,\"cwd\":\"$PWD\"}")" ""
+not_contains "stop ends the run" "$(node -e 'const d=require(process.argv[1]);console.log(JSON.stringify(d.runs.filter((r)=>r.sid===process.argv[2])))' "$PWD/.taskmap/runs.json" "$SID")" '"ended":null'
+[ -f "$TASKMAP_HOME/prompts/$SID.json" ] && ok "the session's prompt record exists" || bad "prompt record missing"
+
 # ---- wrap up ----------------------------------------------------------
 echo
 echo "$PASS passed, $FAIL failed"

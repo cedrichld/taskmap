@@ -89,6 +89,8 @@ or `block` / `reopen --note "<where you stopped>"` it. End the reply with one
 
 Hand a subagent node ids, not the map; it runs `start`, `note`, `done` on those ids only.
 The lead verifies the work and owns the tree.
+Parallel agents: `start` each agent's leaf as you dispatch it; several in progress is fine
+then, and their steps count toward this prompt's progress bar.
 
 ## 7. Keep it small
 

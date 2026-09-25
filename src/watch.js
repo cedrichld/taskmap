@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const store = require('./store');
+const { envSid } = require('./runs');
 
 function oneLine(s, max = 300) {
   const t = String(s === undefined || s === null ? '' : s).replace(/\s+/g, ' ').trim();
@@ -30,6 +31,7 @@ function formatInboxLine(ev) {
 // when it stops, so the dashboard can show a live dot for sessions that exist.
 function heartbeat({ cwd = process.cwd(), beatMs = store.SESSION_BEAT_MS } = {}) {
   const started = store.now();
+  const sid = envSid(); // lets the dashboard tell a running prompt from one whose session died
   let lastDir = null;
   let lastId = null;
 
@@ -54,7 +56,7 @@ function heartbeat({ cwd = process.cwd(), beatMs = store.SESSION_BEAT_MS } = {})
       lastId = null;
       lastDir = null;
     }
-    store.writeSession({ project_id: projectId, cwd, started });
+    store.writeSession({ project_id: projectId, cwd, sid, started });
   };
 
   beat();

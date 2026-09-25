@@ -68,6 +68,22 @@ skipped nodes with a reason, and assumptions are written on the node rather than
 turned into a question. Claude blocks and asks only when the decision costs money,
 destroys data, is public, or would change the rest of the plan.
 
+## How far along, and how long is left
+
+Each prompt you send gets its own bar under the header: how much of *that* prompt's
+work is done and an ETA like `1h23`, `14min` or `<1min`, so you do not have to ask
+whether the chat is finished. It counts the steps the prompt planned (and the old ones
+it picks back up), not the whole map. Messages you type while Claude is still working
+join that prompt instead of starting a new bar. Two sessions on one map get one bar
+each, and a subagent's steps count for the prompt that launched it. **Prompts** lists
+earlier ones with their final times. The browser tab title carries the
+same `62% · 14min`, and the overview card shows it too.
+
+It costs no tokens: the prompt and stop hooks record the turn silently, and the ETA is
+worked out by the dashboard from how fast this prompt and this project finish steps.
+The page moves the numbers every 30 seconds between updates, never while the tab is
+hidden.
+
 ## One tab, every project
 
 `http://localhost:4242/` is an overview: one card per project with its goal,
@@ -179,10 +195,12 @@ anywhere. `taskmap help` prints the rest.
 | `<project>/.taskmap/map.json` | The map. Every write is atomic and serialized through a lock file. |
 | `<project>/.taskmap/log.jsonl` | Every change, one JSON line each. |
 | `<project>/.taskmap/inbox.jsonl` | The subset you originated. |
+| `<project>/.taskmap/runs.json` | One record per prompt: when it started and ended, for the progress bar. |
 | `~/.taskmap/registry.json` | Every project the dashboard knows about. |
 | `~/.taskmap/server.pid`, `server.log` | The one shared server. |
 | `~/.taskmap/config.json` | Small preferences. |
 | `~/.taskmap/sessions/` | One heartbeat file per running session; what the live dot reads. |
+| `~/.taskmap/prompts/` | Each session's latest prompt, so a map made mid-prompt joins it. |
 | `~/.taskmap/share.json` | The share token. Exists only while `taskmap share` is running. |
 | `~/.taskmap/demo/` | The demo project. |
 
@@ -209,7 +227,7 @@ want. They are gitignored, so `git status` will not remind you.
 
 ```bash
 bash tests/smoke.sh          # temp project, isolated home, its own port
-node --test tests/ui.test.js # scope filter, click rule, done list, 3D and flat layouts, fit, title placement
+node --test tests/ui.test.js tests/runs.test.js # scope filter, click rule, layouts; prompt runs, scope, ETA
 claude plugin validate .     # manifest and hook schema
 node tests/gen40.js <dir>    # a 40-node map for layout checks
 python3 tests/qr-verify.py   # decodes src/qr.js output with OpenCV (skips if absent)

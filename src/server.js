@@ -7,6 +7,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const store = require('./store');
+const runs = require('./runs');
 const { UserError } = store;
 
 const UI_DIR = path.join(__dirname, '..', 'ui');
@@ -24,6 +25,7 @@ const POLL_MS = 300;
 const PING_MS = 20000;
 const MAX_BODY = 64 * 1024;
 const LOG_TAIL = 100;
+const PRIOR_TTL_MS = 10 * 60 * 1000;
 
 function log(...args) {
   console.log(new Date().toISOString(), ...args);
@@ -88,7 +90,34 @@ function optStr(v, name, max) {
   return v;
 }
 
-function projectSummary(p, { sessions = {}, clients = {} } = {}) {
+// Pace to assume for a project with too little history of its own: the median gap
+// between finished steps across every project. Recomputed at most every 10 minutes.
+let priorCache = { at: 0, value: null };
+function globalPrior() {
+  if (Date.now() - priorCache.at < PRIOR_TTL_MS) return priorCache.value;
+  const gaps = [];
+  for (const p of store.listProjects()) {
+    if (!p.exists) continue;
+    try {
+      gaps.push(...runs.gapSamples(store.readMap(p.path)));
+    } catch (e) {
+      // unreadable map: skip it
+    }
+  }
+  priorCache = { at: Date.now(), value: gaps.length >= 3 ? runs.median(gaps) : null };
+  return priorCache.value;
+}
+
+function runSummaries(p, map, { limit = 10, live = store.liveSids() } = {}) {
+  return runs.summarize(map, runs.readRuns(p.path), { now: Date.now(), live, prior: globalPrior(), limit });
+}
+
+// The overview card's prompt: a running one if any, else the latest.
+function headlineRun(list) {
+  return list.find((r) => r.state === 'running') || list[0] || null;
+}
+
+function projectSummary(p, { sessions = {}, clients = {}, sids } = {}) {
   const live = (sessions[p.id] || 0) > 0;
   const base = { id: p.id, name: p.name, path: p.path, updated: p.updated, exists: Boolean(p.exists), live, sessions: sessions[p.id] || 0, clients: clients[p.id] || 0 };
   if (!p.exists) return { ...base, goal: '', progress: null, in_progress: 0, in_progress_titles: [], blocked: 0, unread: 0 };
@@ -106,8 +135,11 @@ function projectSummary(p, { sessions = {}, clients = {} } = {}) {
           since: leaf.started_at || null,
         }
       : null;
+    const list = runSummaries(p, map, { limit: 1, live: sids });
     return {
       focus,
+      run: headlineRun(list),
+      running: list.filter((r) => r.state === 'running').length,
       ...base,
       name: map.name || p.name,
       goal: map.goal || '',
@@ -125,7 +157,13 @@ function projectSummary(p, { sessions = {}, clients = {} } = {}) {
 
 function fullPayload(p) {
   const map = store.readMap(p.path);
-  return { project: { id: p.id, name: map.name || p.name, path: p.path, updated: map.updated || p.updated, exists: true, url: store.projectUrl(p.id) }, map, log: store.readLog(p.path, LOG_TAIL) };
+  return {
+    project: { id: p.id, name: map.name || p.name, path: p.path, updated: map.updated || p.updated, exists: true, url: store.projectUrl(p.id) },
+    map,
+    log: store.readLog(p.path, LOG_TAIL),
+    runs: runSummaries(p, map),
+    now: Date.now(),
+  };
 }
 
 // ---------- share guard ----------
@@ -202,7 +240,7 @@ function passesShareGuard(req, res, url) {
 
 function start({ port = store.port(), host = '127.0.0.1' } = {}) {
   const clients = new Map(); // project id -> Set<res>
-  const seen = new Map(); // project id -> { mtimeMs, size }
+  const seen = new Map(); // project id -> "map mtime:size runs mtime:size"
 
   function addClient(id, res) {
     if (!clients.has(id)) clients.set(id, new Set());
@@ -246,7 +284,7 @@ function start({ port = store.port(), host = '127.0.0.1' } = {}) {
     let payload;
     try {
       const full = fullPayload({ ...p, exists: true });
-      payload = { type: 'map', map: full.map, log: full.log };
+      payload = { type: 'map', map: full.map, log: full.log, runs: full.runs, now: full.now };
     } catch (e) {
       return; // a torn read; the next poll will retry
     }
@@ -267,13 +305,16 @@ function start({ port = store.port(), host = '127.0.0.1' } = {}) {
       }
       const st = store.statMap(p.path);
       if (!st) continue;
+      // A prompt starting or ending touches only runs.json; it changes the page all the same.
+      const rs = runs.statRuns(p.path);
+      const key = `${st.mtimeMs}:${st.size} ${rs ? `${rs.mtimeMs}:${rs.size}` : '-'}`;
       const prev = seen.get(p.id);
-      if (!prev) {
-        seen.set(p.id, st);
+      if (prev === undefined) {
+        seen.set(p.id, key);
         continue;
       }
-      if (prev.mtimeMs !== st.mtimeMs || prev.size !== st.size) {
-        seen.set(p.id, st);
+      if (prev !== key) {
+        seen.set(p.id, key);
         broadcast(p.id);
       }
     }
@@ -295,7 +336,8 @@ function start({ port = store.port(), host = '127.0.0.1' } = {}) {
       if (p === '/api/projects' && method === 'GET') {
         const sessions = store.liveSessionCounts();
         const counts = clientCounts();
-        return sendJson(res, 200, { projects: store.listProjects().map((x) => projectSummary(x, { sessions, clients: counts.projects })) });
+        const sids = store.liveSids();
+        return sendJson(res, 200, { projects: store.listProjects().map((x) => projectSummary(x, { sessions, clients: counts.projects, sids })), now: Date.now() });
       }
       if (p === '/api/clients' && method === 'GET') {
         const counts = clientCounts();
@@ -321,7 +363,7 @@ function start({ port = store.port(), host = '127.0.0.1' } = {}) {
           res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
           res.write('retry: 2000\n\n');
           const full = fullPayload({ ...proj, exists: true });
-          sendEvent(res, { type: 'map', map: full.map, log: full.log });
+          sendEvent(res, { type: 'map', map: full.map, log: full.log, runs: full.runs, now: full.now });
           addClient(id, res);
           req.on('close', () => removeClient(id, res));
           return undefined;
