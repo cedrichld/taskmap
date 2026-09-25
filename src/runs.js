@@ -4,7 +4,7 @@
 // stop hooks and by the CLI, read by the server. Prints nothing, so it costs no tokens.
 //
 // ~/.taskmap/prompts/<sid>.json  { sid, prompt, started, ended, dirs }  the session's latest prompt
-// <project>/.taskmap/runs.json   { runs: [{ id, sid, prompt, started, ended, open }] }  oldest first
+// <project>/.taskmap/runs.json   { runs: [{ id, sid, prompt, started, ended, open, agents }] }  oldest first
 //
 // sid is a short hash of the Claude Code session id: the hooks get it on stdin, the
 // CLI from CLAUDE_CODE_SESSION_ID. Nodes carry it as `sid` (added by) and `by` (last
@@ -188,9 +188,10 @@ function interruptedSince(transcriptPath, sinceMs) {
   return false;
 }
 
-// Background agents finishing, monitors firing: Claude Code delivers these as prompts.
+// Background agents finishing, monitors firing, another session or a teammate writing
+// in: Claude Code delivers these as prompts, but none of them is the user's.
 function isNotification(prompt) {
-  return /^\s*<(task-notification|system-reminder|bash-notification)\b/.test(String(prompt || ''));
+  return /^\s*<(task-notification|system-reminder|bash-notification|cross-session-message|teammate-message|agent-message)\b/.test(String(prompt || ''));
 }
 
 // UserPromptSubmit. dir is the project the session's cwd resolves to, or null.
@@ -207,6 +208,7 @@ function onPrompt({ sessionId, prompt, dir, transcriptPath = null, ts = store.no
       const r = doc.runs.filter((x) => x.sid === sid).pop();
       if (!r) return false;
       r.ended = null;
+      delete r.agents; // the lead is back at work; the next Stop counts what is still out
       r.follow_ups = (r.follow_ups || 0) + 1;
       return true;
     }));
@@ -224,6 +226,7 @@ function onPrompt({ sessionId, prompt, dir, transcriptPath = null, ts = store.no
     for (const d of prev.dirs) safe(() => updateRuns(d, (doc) => {
       const r = doc.runs.find((x) => x.sid === sid && !x.ended);
       if (!r) return false;
+      delete r.agents;
       r.follow_ups = (r.follow_ups || 0) + 1;
       return true;
     }));
@@ -240,14 +243,46 @@ function onPrompt({ sessionId, prompt, dir, transcriptPath = null, ts = store.no
   }
 }
 
-// Stop, once the turn is really over.
-function onStop({ sessionId, dir, ts = store.now() }) {
+// Stop, once the turn is really over. With background agents still out (agents > 0) the
+// turn is over but the prompt is not: the run stays open, so its bar and ETA keep going,
+// and records how many agents it waits on. Their notifications resume it (onPrompt), and
+// a message typed meanwhile joins it, as it would mid-turn.
+function onStop({ sessionId, dir, agents = 0, ts = store.now() }) {
   const sid = sidOf(sessionId);
   const rec = readPrompt(sid);
   const dirs = new Set(rec ? rec.dirs : []);
   if (dir) dirs.add(dir);
+  if (agents > 0) {
+    for (const d of dirs) safe(() => updateRuns(d, (doc) => {
+      const r = doc.runs.filter((x) => x.sid === sid && !x.ended).pop();
+      if (!r || r.agents === agents) return false;
+      r.agents = agents;
+      return true;
+    }));
+    if (rec) safe(() => writePrompt({ ...rec, ended: null, last: ts }));
+    return;
+  }
   for (const d of dirs) safe(() => endRuns(d, sid, ts));
   if (rec && !rec.ended) safe(() => writePrompt({ ...rec, ended: ts }));
+}
+
+// Claude's own estimate for the prompt (`taskmap eta 15m`): `ms` from `at`, for the work
+// left then (`left`, in step weight). It sets the run's pace until real steps take over.
+// The session's open run gets it; without a session id, the newest open run.
+function setEstimate(dir, sid, estimateMs, ts = store.now()) {
+  const map = store.readMap(dir);
+  let set = null;
+  updateRuns(dir, (doc) => {
+    const open = doc.runs.filter((r) => !r.ended && (!sid || r.sid === sid));
+    const r = open[open.length - 1];
+    if (!r) return false;
+    const s = summarize(map, doc, { now: Date.parse(ts), limit: doc.runs.length }).find((x) => x.id === r.id);
+    const left = s ? Math.round((s.total - s.done - s.waiting) * 10) / 10 : 0;
+    r.estimate = { ms: estimateMs, at: ts, left: left > 0 ? left : null };
+    set = r;
+    return true;
+  });
+  return set;
 }
 
 // A map that did not exist when the prompt arrived (taskmap init mid-prompt, or a
@@ -324,11 +359,15 @@ function priorPace(map, fallback = null) {
   return gaps.length >= 3 ? median(gaps) : fallback;
 }
 
-// How many steps a milestone the plan has not broken down yet is likely worth.
+// How many steps a milestone the plan has not broken down yet is likely worth. Milestones
+// finished without ever being broken down count as the one step they turned out to be.
 function chunksPerMilestone(map, kids) {
   const counts = [];
   for (const m of kids.get(map.root) || []) {
-    if (!kids.has(m.id)) continue;
+    if (!kids.has(m.id)) {
+      if (m.status === 'done') counts.push(1);
+      continue;
+    }
     let leaves = 0;
     const walk = (id) => {
       for (const k of kids.get(id) || []) {
@@ -368,7 +407,13 @@ function summarizeRun(map, kids, run, all, { now, live, prior, chunks }) {
   const engaged = leftover.some((n) => within(n.updated) && (sid ? Boolean(n.by) && mine(n.by) : n.status !== 'pending'));
   const open = new Set(engaged ? run.open : []);
 
+  // With an estimate from Claude, the pace is measured from when it was given: the time
+  // spent looking around before the plan is already in it.
+  const est = run.estimate && run.estimate.ms > 0 ? run.estimate : null;
+  const origin = est ? Math.max(t0, ms(est.at) || t0) : t0;
+
   let done = 0;
+  let paceDone = 0;
   let total = 0;
   let waiting = 0;
   let steps = 0;
@@ -390,15 +435,20 @@ function summarizeRun(map, kids, run, all, { now, live, prior, chunks }) {
       done += 1;
       total += 1;
       const f = ms(n.finished_at);
-      if (f !== null && f >= t0 && (lastDone === null || f > lastDone)) lastDone = f;
+      if (f !== null && f >= origin) {
+        paceDone += 1;
+        if (lastDone === null || f > lastDone) lastDone = f;
+      }
       continue;
     }
-    const w = n.parent === map.root ? chunks : 1;
+    // Only a milestone nobody has started may still grow sub-steps; one being worked on as is weighs 1.
+    const w = n.parent === map.root && n.status === 'pending' ? chunks : 1;
     total += w;
     if (n.status === 'blocked') waiting += w;
   }
 
-  const runPace = done && lastDone !== null ? (lastDone - t0) / done : null;
+  const runPace = paceDone && lastDone !== null ? (lastDone - origin) / paceDone : null;
+  const estPace = est ? est.ms / Math.max(1, est.left || total) : null;
 
   const heartbeat = Boolean(live && sid && live.has(sid));
   let state;
@@ -417,9 +467,15 @@ function summarizeRun(map, kids, run, all, { now, live, prior, chunks }) {
     total: Math.round(total * 10) / 10,
     waiting: Math.round(waiting * 10) / 10,
     run_pace_ms: runPace ? Math.round(runPace) : null,
-    prior_ms: prior ? Math.round(prior) : null,
-    base: new Date(lastDone !== null ? lastDone : t0).toISOString(),
+    // Per step: Claude's estimate spread over the work it covered, else the project's history.
+    prior_ms: estPace ? Math.round(estPace) : prior ? Math.round(prior) : null,
+    estimate_ms: est ? est.ms : null,
+    estimate_at: est ? est.at : null,
+    pace_from: new Date(origin).toISOString(),
+    pace_done: paceDone,
+    base: new Date(lastDone !== null ? lastDone : origin).toISOString(),
     elapsed_ms: Math.max(0, (run.ended ? t1 : now) - t0),
+    agents: !run.ended && run.agents > 0 ? run.agents : 0, // background agents the idle lead waits on
   };
   return Object.assign(r, extrapolate(r, now)); // pct, eta_ms and pace_ms at `now`
 }
@@ -451,6 +507,7 @@ module.exports = {
   onPrompt,
   onStop,
   ensureRun,
+  setEstimate,
   gapSamples,
   median,
   priorPace,

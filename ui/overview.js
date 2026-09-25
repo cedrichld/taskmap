@@ -38,7 +38,7 @@ function runHtml(p) {
       <div class="ov-run-row">
         <span class="ov-bar"><i style="transform:scaleX(${fill.toFixed(4)})"></i></span>
         <span class="ov-run-big mono">${esc(w.big)}</span>
-        ${w.eta ? `<span class="ov-run-eta">${esc(w.eta)}</span>` : `<span class="muted">${esc(w.small)}</span>`}${more}
+        ${w.eta ? `<span class="ov-run-eta">${esc(w.eta)}</span>${r.agents ? `<span class="muted ov-run-more">${esc(P.agentsText(r.agents))}</span>` : ''}` : `<span class="muted">${esc(w.small)}</span>`}${more}
       </div>
     </div>`;
 }
@@ -126,8 +126,9 @@ function render() {
   const live = list.filter((p) => p.live).length;
   // The soonest running prompt goes in the tab title.
   const now = Date.now() + state.skew;
-  const etas = list.filter((p) => p.run && p.run.state === 'running').map((p) => P.extrapolate(p.run, now).eta_ms).filter((e) => e !== null);
-  const soonest = etas.length ? ` · next done ${P.fmtDur(Math.min(...etas))}` : '';
+  const etas = list.filter((p) => p.run && p.run.state === 'running').map((p) => ({ r: p.run, ms: P.extrapolate(p.run, now).eta_ms })).filter((e) => e.ms !== null);
+  const next = etas.reduce((a, e) => (!a || e.ms < a.ms ? e : a), null);
+  const soonest = next ? ` · next done ${P.etaText(next.r, next.ms)}` : '';
   document.title = live ? `(${live}) taskmap${soonest} — all projects` : 'taskmap — all projects';
 }
 

@@ -1247,14 +1247,14 @@ function shownRuns() {
 function runRowHtml(r, now, label) {
   const { cls, big, eta, small, pct } = PR.words(r, now);
   const fill = r.state === 'done' ? 1 : pct || 0;
-  const tip = `${r.prompt}\n${r.done} of ${r.steps} steps done${r.total > r.steps ? '; milestones not broken down yet count as several' : ''} · started ${fmtClock(r.started)}${r.follow_ups ? ` · ${r.follow_ups} more message${r.follow_ups > 1 ? 's' : ''} while it ran` : ''}`;
+  const tip = `${r.prompt}\n${r.done} of ${r.steps} steps done${r.total > r.steps ? '; milestones not broken down yet count as several' : ''} · started ${fmtClock(r.started)}${r.follow_ups ? ` · ${r.follow_ups} more message${r.follow_ups > 1 ? 's' : ''} while it ran` : ''}${r.agents ? ` · Claude is waiting on ${r.agents} background agent${r.agents > 1 ? 's' : ''}` : ''}${r.estimate_ms ? `\nClaude estimated ${PR.fmtDur(r.estimate_ms)} at ${fmtClock(r.estimate_at)}` : r.state === 'running' ? '\nNo estimate from Claude: the ETA comes from finished steps' : ''}`;
   // Six cells per prompt, laid out by the grid on #run-rows so stacked prompts line up.
   return `<div class="run st-${cls}" data-run-row="${esc(r.id)}">`
     + `<span class="k">${esc(label)}</span>`
     + `<span class="run-p" title="${esc(tip)}">${esc(r.prompt || '(no text)')}</span>`
     + `<span class="run-bar" title="${esc(tip)}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(fill * 100)}"><i style="transform:scaleX(${fill.toFixed(4)})"></i></span>`
     + `<span class="run-big mono">${esc(big)}</span>`
-    + `<span class="run-eta">${esc(eta || '')}</span>`
+    + `<span class="run-eta"${eta && eta.startsWith('ETA ~') ? ' title="~ taskmap\'s estimate from finished steps; Claude gave none"' : ''}>${esc(eta || '')}</span>`
     + `<span class="run-small">${esc(small)}${state.pinnedRun ? ' <button type="button" class="linkish" data-run-live>Back to live</button>' : ''}</span>`
     + '</div>';
 }
@@ -1275,7 +1275,7 @@ function renderRuns() {
   const name = state.map ? state.map.name || state.pid : state.pid;
   if (live.length) {
     const x = PR.extrapolate(live[0], now);
-    document.title = `${PR.pctText(x.pct)}${x.eta_ms !== null ? ` · ${PR.fmtDur(x.eta_ms)}` : ''} · ${name}`;
+    document.title = `${PR.pctText(x.pct)}${x.eta_ms !== null ? ` · ${PR.etaText(live[0], x.eta_ms)}` : ''} · ${name}`;
   } else document.title = `${name} · taskmap`;
 }
 function renderRunMenu() {

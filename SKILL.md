@@ -27,7 +27,7 @@ Before code, one `add --batch`: 3 to 8 milestones under `n0`, plus one level of 
 under the first milestone only. Deeper levels are added when reached; depth is capped at 3.
 
 ```bash
-taskmap add --batch <<'JSON'
+taskmap add --batch --eta 2h <<'JSON'
 [
  {"key":"m1","parent":"n0","title":"Build the maze","done_when":"Maze is visible and walls block the player"},
  {"key":"m2","parent":"n0","title":"Make the ghosts chase the player"},
@@ -47,6 +47,11 @@ Fields, each one line, written for someone who does not know the stack:
   using it to think a problem through (a design choice, a tricky bug); that is the one
   place detail pays for itself.
 - `why`: omit.
+
+`--eta`: your honest estimate for this prompt's whole job, from now (`15m`, `1h30`). The
+user's ETA starts from it; without it they see none until a step finishes. No new plan
+(picking up old steps)? Chain `taskmap eta <duration>` with the first `start`. Rerun it
+if the scope changes a lot.
 
 Paste `taskmap tree` into the reply once so the plan is in the terminal too.
 
@@ -80,7 +85,8 @@ plausible intent when you reach them.
 
 ## 5. Ending a turn
 
-The Stop hook refuses to end while a leaf is in progress. Close it in the last real call:
+The Stop hook refuses to end while a leaf is in progress (background agents' leaves are
+exempt, see 6). Close it in the last real call:
 `taskmap done <id> --note ".." --state "State: <where things are>. Next: <step>. Waiting on you: <question or nothing>"`,
 or `block` / `reopen --note "<where you stopped>"` it. End the reply with one
 `Waiting on you:` line.
@@ -88,9 +94,14 @@ or `block` / `reopen --note "<where you stopped>"` it. End the reply with one
 ## 6. Subagents
 
 Hand a subagent node ids, not the map; it runs `start`, `note`, `done` on those ids only.
-The lead verifies the work and owns the tree.
+The lead verifies the work and owns the tree. Tell it to report on the map as it goes, at
+no cost to anyone's context: chain a one-line `taskmap note <id> "<finding>"` when it learns
+something that matters (root cause found, fix passing, stuck on X), and split a leaf longer
+than ~20 minutes into 2 to 4 sub-steps it closes as it goes, so the bar and ETA move.
 Parallel agents: `start` each agent's leaf as you dispatch it; several in progress is fine
-then, and their steps count toward this prompt's progress bar.
+then, and their steps count toward this prompt's progress bar. Ending a turn to wait for
+background agents: leave their leaves in progress, never `reopen` them; the bar and its
+ETA keep running until they report.
 
 ## 7. Keep it small
 

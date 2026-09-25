@@ -9,19 +9,23 @@
   const PARTIAL_MAX = 0.8; // credit given to the step under way, at most
   const pad2 = (n) => String(n).padStart(2, '0');
 
-  const PRIOR_WEIGHT = 2; // how many observed steps the project's usual pace is worth
+  const PRIOR_WEIGHT = 2; // how many observed steps the prior is worth
 
   // Time per step at `now`. This prompt's own pace (time to its last finished step /
-  // steps finished) is blended with the project's usual pace (prior_ms). When nothing
-  // has finished for a while, the time since the start stretches the pace, so a stall
-  // pushes the ETA out instead of leaving it stuck at <1min.
+  // steps finished, counted from Claude's estimate when it gave one) is blended with the
+  // prior: Claude's estimate spread over its steps, else the project's usual pace. When
+  // nothing has finished for a while, the time elapsed stretches the pace, so a stall
+  // pushes the ETA out instead of leaving it stuck at <1min. With no estimate from Claude
+  // and nothing finished yet there is no pace: the history alone is too rough a guess.
   function paceAt(r, now) {
-    const t0 = Date.parse(r.started);
+    const t0 = Date.parse(r.pace_from || r.started);
+    const done = r.pace_done !== undefined ? r.pace_done : r.done;
     const prior = r.prior_ms || null;
     let own = null;
-    if (r.done && r.run_pace_ms) own = r.state === 'running' ? Math.max(r.run_pace_ms, (now - t0) / (r.done + 1)) : r.run_pace_ms;
+    if (done && r.run_pace_ms) own = r.state === 'running' ? Math.max(r.run_pace_ms, (now - t0) / (done + 1)) : r.run_pace_ms;
+    else if (!r.estimate_ms) return null;
     else if (r.state === 'running' && prior && now - t0 > prior) own = now - t0; // the first step runs long
-    const n = r.done || 1;
+    const n = done || 1;
     if (own && prior) return (n * own + PRIOR_WEIGHT * prior) / (n + PRIOR_WEIGHT);
     return own || prior;
   }
@@ -45,6 +49,11 @@
     return `${Math.floor(m / 60)}h${pad2(m % 60)}`;
   }
 
+  const agentsText = (n) => `${n} agent${n > 1 ? 's' : ''} working`;
+
+  // An ETA Claude did not estimate itself (worked out from finished steps) reads "~14min".
+  const etaText = (r, ms) => `${r.estimate_ms ? '' : '~'}${fmtDur(ms)}`;
+
   const pctText = (p) => (p === null || p === undefined ? '' : `${Math.floor(p * 100)}%`);
 
   // What a prompt's line says: { cls, big (% or a word), eta (the pill), small (small print), pct }.
@@ -54,15 +63,17 @@
     const pct = pctText(x.pct);
     const w = (cls, big, eta, small) => ({ cls, big, eta, small, pct: x.pct });
     if (r.state === 'running') {
-      if (!r.total) return w('running', 'Working', '', `${took} in · no steps on the map yet`);
-      if (x.eta_ms === null) return w('running', pct, 'ETA after 1st step', `${took} in`);
-      if (r.waiting && x.eta_ms === 0) return w('waiting', pct, 'Waiting on you', `${took} in`);
-      return w('running', pct, `ETA ${fmtDur(x.eta_ms)}`, `${took} in`);
+      // The lead may be idle while background agents work for this prompt: still running.
+      const inn = r.agents ? `${agentsText(r.agents)} · ${took} in` : `${took} in`;
+      if (!r.total) return w('running', 'Working', '', r.agents ? inn : `${took} in · no steps on the map yet`);
+      if (x.eta_ms === null) return w('running', pct, 'ETA after 1st step', inn);
+      if (r.waiting && x.eta_ms === 0) return w('waiting', pct, 'Waiting on you', inn);
+      return w('running', pct, `ETA ${etaText(r, x.eta_ms)}`, inn);
     }
     if (r.state === 'done') return w('done', 'Done', '', `in ${took}`);
     if (r.state === 'paused') return w(r.waiting ? 'waiting' : 'paused', pct, '', r.waiting ? `waiting on you · ran ${took}` : `paused · ran ${took}`);
     return w('stopped', pct || '—', '', `session ended · ran ${took}`);
   }
 
-  return { PARTIAL_MAX, paceAt, extrapolate, fmtDur, pctText, words };
+  return { PARTIAL_MAX, paceAt, extrapolate, fmtDur, etaText, pctText, agentsText, words };
 });

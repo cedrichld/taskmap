@@ -366,6 +366,11 @@ equals "session-start is silent without a map" "$(cd "$TMP" && hook session-star
 "$TM" start n5 >/dev/null 2>&1
 contains "stop blocks on an open leaf" "$(hook stop "{\"stop_hook_active\":false,\"cwd\":\"$PWD\"}")" '"decision":"block"'
 equals "stop allows the second time" "$(hook stop "{\"stop_hook_active\":true,\"cwd\":\"$PWD\"}")" ""
+contains "without a task list, stop says to leave agents' steps alone" "$(hook stop "{\"stop_hook_active\":false,\"cwd\":\"$PWD\"}")" 'background agent is still working on stays in progress'
+equals "stop lets the lead wait on background agents" "$(hook stop "{\"stop_hook_active\":false,\"cwd\":\"$PWD\",\"background_tasks\":[{\"id\":\"a1\",\"type\":\"subagent\",\"status\":\"running\"}]}")" ""
+out=$(hook stop "{\"stop_hook_active\":false,\"cwd\":\"$PWD\",\"background_tasks\":[{\"id\":\"b1\",\"type\":\"shell\",\"status\":\"running\"}]}")
+contains "a background shell is not an agent: stop still blocks" "$out" '"decision":"block"'
+not_contains "with a task list and no agents, no agent clause" "$out" 'background agent'
 "$TM" reopen n5 >/dev/null 2>&1
 equals "stop allows with nothing open" "$(hook stop "{\"stop_hook_active\":false,\"cwd\":\"$PWD\"}")" ""
 long=$(printf 'x%.0s' $(seq 1 450))
@@ -413,6 +418,17 @@ contains "the overview carries it too" "$(curl -s "$URL/api/projects")" '"prompt
 equals "stop hook prints nothing" "$(hook stop "{\"session_id\":\"S-1\",\"stop_hook_active\":false,\"cwd\":\"$PWD\"}")" ""
 not_contains "stop ends the run" "$(node -e 'const d=require(process.argv[1]);console.log(JSON.stringify(d.runs.filter((r)=>r.sid===process.argv[2])))' "$PWD/.taskmap/runs.json" "$SID")" '"ended":null'
 [ -f "$TASKMAP_HOME/prompts/$SID.json" ] && ok "the session's prompt record exists" || bad "prompt record missing"
+hook prompt "{\"session_id\":\"S-1\",\"prompt\":\"Send agents after the ghosts\",\"cwd\":\"$PWD\"}" >/dev/null
+equals "stop with agents out prints nothing" "$(hook stop "{\"session_id\":\"S-1\",\"stop_hook_active\":false,\"cwd\":\"$PWD\",\"background_tasks\":[{\"id\":\"a1\",\"type\":\"subagent\",\"status\":\"running\"},{\"id\":\"a2\",\"type\":\"subagent\",\"status\":\"running\"}]}")" ""
+contains "the run waits on its agents instead of ending" "$(node -e 'const d=require(process.argv[1]);console.log(JSON.stringify(d.runs.filter((r)=>r.sid===process.argv[2]).pop()))' "$PWD/.taskmap/runs.json" "$SID")" '"ended":null,"open":'
+sleep 0.5
+contains "the API keeps it running with its agents" "$(curl -s "$URL/api/projects/$ID")" '"agents":2'
+equals "eta records the prompt's estimate" "$(CLAUDE_CODE_SESSION_ID=S-1 "$TM" eta 1h30 2>&1)" "eta 1h30"
+sleep 0.5
+contains "the API carries the estimate" "$(curl -s "$URL/api/projects/$ID")" '"estimate_ms":5400000'
+contains "eta rejects a non-duration" "$(CLAUDE_CODE_SESSION_ID=S-1 "$TM" eta soon 2>&1)" "eta needs a duration like 15m"
+contains "eta needs a running prompt" "$(CLAUDE_CODE_SESSION_ID=S-9 "$TM" eta 10m 2>&1)" "no prompt is running here"
+equals "add --eta sets it with the plan" "$(printf '[{"key":"x","parent":"n0","title":"Scare the ghosts"}]' | CLAUDE_CODE_SESSION_ID=S-1 "$TM" add --batch --eta 20 2>&1 | tail -1)" "eta 20min"
 
 # ---- wrap up ----------------------------------------------------------
 echo

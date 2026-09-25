@@ -75,12 +75,17 @@ work is done and an ETA like `1h23`, `14min` or `<1min`, so you do not have to a
 whether the chat is finished. It counts the steps the prompt planned (and the old ones
 it picks back up), not the whole map. Messages you type while Claude is still working
 join that prompt instead of starting a new bar. Two sessions on one map get one bar
-each, and a subagent's steps count for the prompt that launched it. **Prompts** lists
+each, and a subagent's steps count for the prompt that launched it. When Claude ends
+its turn to wait for background agents, the prompt is not over: the bar keeps its ETA
+and says how many agents are still working. **Prompts** lists
 earlier ones with their final times. The browser tab title carries the
 same `62% · 14min`, and the overview card shows it too.
 
-It costs no tokens: the prompt and stop hooks record the turn silently, and the ETA is
-worked out by the dashboard from how fast this prompt and this project finish steps.
+The ETA starts from Claude's own estimate, given with the plan (`taskmap add --batch
+--eta 15m`, or `taskmap eta 15m`), and then follows how fast the prompt's steps actually
+finish. Without an estimate there is no ETA until the first step is done, rather than a
+guess from the project's history, and the ETA taskmap then works out itself reads `~14min`. Everything else costs no tokens: the prompt and stop
+hooks record the turn silently, and the dashboard does the maths.
 The page moves the numbers every 30 seconds between updates, never while the tab is
 hidden.
 
@@ -172,6 +177,7 @@ taskmap done <id> [--note ".."] [--next] [--state ".."]
                                             # closes parents whose leaves are all done; --next starts the next
                                             # leaf and prints it; --state notes where things stand on n0
 taskmap block|skip <id> --reason ".." | reopen <id> [--note ".."]
+taskmap eta <duration>          # Claude's estimate for this prompt: 15m, 1h30
 taskmap edit <id> --title|--what|--why|--done-when|--parent|--order|--link|--unlink ..
 taskmap note <id> "<text>"
 taskmap tree [--open|--all] [--depth N]     # --open collapses finished subtrees

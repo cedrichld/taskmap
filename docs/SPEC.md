@@ -306,6 +306,8 @@ unread: 2
 `check --json` → `{"map":true,"id":"…","name":"…","in_progress":[{"id":"n6","title":"…","leaf":true}],"blocked":[{"id":"n8","title":"…","reason":"…"}],"unread":2}`. One `waiting:` line per blocked node. Without a map: `no map` / `{"map":false}`. Exit 0 always. The root is never reported as in progress.
 
 `add` prints the new id. `add --batch` prints one `key -> id` line per item.
+`eta <duration>` (and `--eta` on `add`) stores Claude's estimate on the session's open
+run and prints `eta 15min`; it fails when no prompt of this session is running there.
 `init` prints `n0  <name>  <url>` (or `status` output when the map already exists).
 `start` `done` `block` `skip` `reopen` `edit` `note` print the node id.
 `serve --ensure` prints `server running at <url>` or `server started at <url>`.
@@ -324,7 +326,7 @@ server it opens. `TASKMAP_NO_BROWSER=1` suppresses the launch everywhere.
 
 Hooks read the event JSON on stdin and print what Claude should see:
 - `hook session-start`: `[taskmap] Map found: <name>, <done>/<total> done, <n> in progress, <b> blocked, <k> unread. Run /taskmap to resume.` or nothing. A second line names the overview URL when more than one project is registered and present on disk. When `source` is `compact`: a `[taskmap] Context was compacted…` line, the `tree --open` output (depth reduced until it fits in 9,000 characters), the in-progress nodes, the blocked nodes and the unread count.
-- `hook stop`: nothing when `stop_hook_active` is true or no leaf is in progress; otherwise `{"decision":"block","reason":"taskmap: n5 \"…\" is still in_progress …"}`.
+- `hook stop`: nothing when `stop_hook_active` is true, no leaf is in progress, or `background_tasks` lists a running agent; otherwise `{"decision":"block","reason":"taskmap: n5 \"…\" is still in_progress …"}`.
 - `hook prompt`: nothing unless `prompt_reminder` is on, the prompt is over 400 characters, does not start with `/`, and no leaf is in progress; then one `[taskmap] Long prompt …` line.
 
 ### Status transitions
@@ -509,16 +511,26 @@ the CLI only tags nodes. `sid` is the first 10 hex chars of sha1(session id): ho
 read `session_id` from stdin, the CLI and `taskmap watch` read `CLAUDE_CODE_SESSION_ID`.
 
 - `runs.json`: `{ "runs": [ { "id": "r3", "sid", "prompt": first 160 chars, "started",
-  "ended": null | ISO, "open": [leaf ids open when it started], "follow_ups": n } ] }`.
+  "ended": null | ISO, "open": [leaf ids open when it started], "follow_ups": n,
+  "agents": n (background agents the idle lead waits on; cleared when it resumes),
+  "estimate": { "ms", "at", "left" } (from `taskmap eta`: Claude's estimate, when it was
+  given, and the step weight left then) } ] }`.
 - A prompt that arrives while the session's run is open (no `Stop` since) is a message
   typed mid-turn: it joins that run (`follow_ups += 1`) and the first prompt keeps the
   bar. Exception: the transcript (`transcript_path`) shows `[Request interrupted by
   user]` after the last prompt, or 12 h passed; then the old run ends and a new one starts.
 - A notification delivered as a prompt (`<task-notification>`, `<system-reminder>`,
-  `<bash-notification>`: agents finishing, monitors) never starts a run: it resumes the
+  `<bash-notification>`, `<cross-session-message>`, `<teammate-message>`, `<agent-message>`:
+  agents finishing, monitors, other sessions writing in) never starts a run: it resumes the
   session's latest run (`ended` back to null), since the session is carrying on with it.
-- `Stop` ends the run only when no leaf is in progress. After its one block, leaves
-  still in progress mean agents are working on them, so the run stays open.
+- `Stop` input carries `background_tasks` (Claude Code 2.1+): running `subagent`,
+  `workflow`, `teammate` or `cloud session` tasks mean the lead is ending its turn to
+  wait for agents. Then `Stop` never blocks (the in-progress leaves are theirs), the run
+  stays open with `agents: n`, and the prompt record stays open too, so a message typed
+  meanwhile joins the run. Shells and monitors do not count: servers and watchers never
+  finish. With no agents out, `Stop` blocks once on in-progress leaves, then ends the run.
+  Without `background_tasks` (older Claude Code), leaves still in progress after the one
+  block are taken to mean agents are on them, and the run stays open.
 - A map that did not exist when the prompt arrived joins it on the CLI's first write
   (`taskmap init` included), via `~/.taskmap/prompts/<sid>.json`.
 
@@ -531,8 +543,14 @@ touched are that run's.
 
 Summary (`runs.summarize`, sent to the UI): `{ id, prompt, follow_ups, started, ended,
 state: running|done|paused|stopped, steps, done, total, waiting, run_pace_ms, prior_ms,
-base, elapsed_ms, pct, eta_ms, pace_ms }`. A leaf counts 1; an open milestone with no children yet
-counts the map's average leaves per milestone (1 to 8, default 3). `waiting` is blocked
+base, elapsed_ms, agents, estimate_ms, estimate_at, pace_from, pace_done, pct, eta_ms, pace_ms }`. A run waiting on agents is `running`
+(its ETA keeps counting) and says `N agents working` in its small print. A leaf counts 1; a pending milestone with no children yet
+counts the map's average leaves per milestone (milestones finished without children count
+1; clamped 1 to 8, default 3); a started one with no children counts 1. With an estimate,
+`prior_ms` is `estimate.ms / estimate.left` (or / total when it was given before the plan)
+and the run's own pace counts only steps finished after it, from `estimate.at`
+(`pace_from`, `pace_done`). With no estimate and nothing finished, there is no pace and
+no ETA ("ETA after 1st step"); an ETA without an estimate behind it is shown `~14min`. `waiting` is blocked
 weight. The pace blends this run's own (`run_pace_ms`: time to its last finished step / steps
 done; while running, at least time so far / (done + 1), so a stall stretches it) with
 `prior_ms`, the project's median gap between finished steps (5 s to 45 min gaps, at

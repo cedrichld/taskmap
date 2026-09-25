@@ -7,6 +7,7 @@ const http = require('http');
 const { spawn } = require('child_process');
 const store = require('./store');
 const runs = require('./runs');
+const { fmtDur } = require('../ui/prompts');
 const { UserError } = store;
 
 const BOOL_FLAGS = new Set(['track', 'open', 'all', 'peek', 'json', 'force', 'batch', 'ensure', 'stop', 'restart', 'foreground', 'help', 'version', 'quiet', 'if-needed', 'next']);
@@ -56,7 +57,8 @@ function usage() {
     'taskmap <command> [args]   (state: <project>/.taskmap/, dashboard: ' + store.baseUrl() + ')',
     '  init "<name>" --goal "<one sentence>" [--track]',
     '  add "<title>" --parent <id> [--what ..] [--done-when ..] [--why ..] [--link <id>].. [--after <id>] [--source user]',
-    '  add --batch < items.json      [{key, parent, title, what?, done_when?, why?, links?}]',
+    '  add --batch [--eta 15m] < items.json      [{key, parent, title, what?, done_when?, why?, links?}]',
+    '  eta <duration>                your estimate for this prompt (15m, 1h30); the dashboard ETA starts from it',
     '  start <id> [--note ".."]        also starts its pending parents',
     '  done <id> [--note ".."] [--next] [--state ".."]   --next starts the next leaf; --state notes where things stand on n0',
     '  block <id> --reason ".." | skip <id> --reason ".." | reopen <id>',
@@ -321,6 +323,7 @@ function cmdAdd({ pos, flags }) {
     const items = readStdinJson();
     const r = doMutate(flags, (map, ctx) => store.addBatch(map, ctx, items, { source: flags.source === 'user' ? 'user' : 'claude', force: Boolean(flags.force) }));
     for (const { key, id } of r.result) out(`${key} -> ${id}`);
+    if (flags.eta !== undefined) setEta(flags, flags.eta);
     return;
   }
   const title = pos[0];
@@ -339,6 +342,31 @@ function cmdAdd({ pos, flags }) {
     })
   );
   out(r.result.id);
+  if (flags.eta !== undefined) setEta(flags, flags.eta);
+}
+
+// 15m, 15min, 1h, 1h30, 90s, 0.5h; a bare number is minutes.
+function parseDuration(text) {
+  const t = String(text === undefined || text === null ? '' : text).trim().toLowerCase();
+  let m = t.match(/^(\d+(?:\.\d+)?)\s*(s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)?$/);
+  if (m) {
+    const u = (m[2] || 'm')[0];
+    return Math.round(parseFloat(m[1]) * (u === 's' ? 1000 : u === 'h' ? 3600000 : 60000));
+  }
+  m = t.match(/^(\d+)\s*h\s*(\d+)\s*(m|mins?|minutes?)?$/);
+  return m ? (parseInt(m[1], 10) * 60 + parseInt(m[2], 10)) * 60000 : null;
+}
+
+// eta <duration>: Claude's own estimate of how long this prompt's work will take. The
+// dashboard starts its ETA from it instead of guessing from the project's history.
+function setEta(flags, text) {
+  const ms = parseDuration(text);
+  if (!ms || ms > 7 * 24 * 3600000) throw new UserError(`eta needs a duration like 15m, 1h or 1h30 (got "${text === undefined ? '' : text}").`);
+  const dir = projectDir(flags);
+  const sid = runs.envSid();
+  runs.ensureRun(dir, sid);
+  if (!runs.setEstimate(dir, sid, ms)) throw new UserError('no prompt is running here for this session, so there is nothing to estimate.');
+  out(`eta ${fmtDur(ms)}`);
 }
 
 function cmdSetStatus(status, { pos, flags }) {
@@ -776,11 +804,23 @@ async function hookSessionStart(input, cwd, flags) {
   if (registered > 1) out(`[taskmap] ${registered} projects are registered; the overview of all of them is ${store.overviewUrl()}.`);
 }
 
+// Background work that reports back and wakes the session: while any of it runs, the
+// turn can end but the prompt is not over. Shells and monitors are left out, since a
+// server or a watcher never finishes. null: this Claude Code does not send the list.
+const AGENT_TASKS = new Set(['subagent', 'workflow', 'teammate', 'cloud session']);
+function pendingAgents(input) {
+  if (!Array.isArray(input.background_tasks)) return null;
+  return input.background_tasks.filter((t) => t && AGENT_TASKS.has(t.type)).length;
+}
+
 // Stop: block once while a leaf is still in progress; stop_hook_active is the loop guard.
-// When the turn really ends, the prompt's run ends with it (silently) — unless leaves are
-// still in progress after that one block, which means agents are still on them.
+// With background agents still out, nothing blocks: the in-progress leaves are theirs,
+// and the prompt's run keeps going (with its ETA) until they report. Without the task
+// list, leaves still in progress after the one block are taken to mean the same.
 function hookStop(input, cwd, flags) {
   const dir = resolveQuiet(cwd, flags);
+  const agents = pendingAgents(input);
+  if (agents) return runs.onStop({ sessionId: input.session_id, dir, agents });
   if (dir) {
     const map = store.readMap(dir);
     const leaves = store.inProgressNodes(map).filter((n) => store.isLeaf(map, n.id));
@@ -788,11 +828,11 @@ function hookStop(input, cwd, flags) {
       const list = leaves.map((n) => `${n.id} "${n.title}"`).join(', ');
       out(JSON.stringify({
         decision: 'block',
-        reason: `taskmap: ${list} still in progress. Before ending: taskmap done <id> --note ".." --state "State: .. Next: .." if finished; taskmap block <id> --reason "waiting on user: .." if it waits on the user; else taskmap reopen <id> --note "<where you stopped>".`,
+        reason: `taskmap: ${list} still in progress. Before ending: taskmap done <id> --note ".." --state "State: .. Next: .." if finished; taskmap block <id> --reason "waiting on user: .." if it waits on the user; else taskmap reopen <id> --note "<where you stopped>".${agents === null ? ' A step a background agent is still working on stays in progress: leave it.' : ''}`,
       }));
       return;
     }
-    if (leaves.length) return;
+    if (leaves.length && agents === null) return;
   }
   runs.onStop({ sessionId: input.session_id, dir });
 }
@@ -925,6 +965,8 @@ async function run(argv) {
       return cmdEdit(args);
     case 'note':
       return cmdNote(args);
+    case 'eta':
+      return setEta(flags, args.pos[0]);
     case 'tree':
       return cmdTree(args);
     case 'show':
