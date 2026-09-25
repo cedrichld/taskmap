@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// Headless render of the dashboard: node tests/shots.js <projectId|/path> <WxH> <out.png> [select=<nodeId>] [view=map|graph|orbs|outline] [scope=open|done|all] [mobile=1] [settle=<ms>] [interact=1] [click=<nodeId> clicks=<n>] [js=<expression>] [at=<x,y>]
+// Headless render of the dashboard: node tests/shots.js <projectId|/path> <WxH> <out.png> [select=<nodeId>] [view=map|graph|orbs|outline] [scope=open|done|all] [mobile=1] [settle=<ms>] [interact=1] [click=<nodeId> clicks=<n> button=right then=<selector>] [js=<expression>] [at=<x,y>]
 // Drives Chrome over the DevTools protocol (an open SSE stream keeps --virtual-time-budget from ever settling).
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -49,6 +49,7 @@ async function main() {
       return r.result.result.value;
     };
     await send('Runtime.enable'); await send('Log.enable'); await send('Page.enable');
+    await send('Browser.grantPermissions', { origin: BASE, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] }); // lets then= read what a copy put there
     const mobile = Boolean(opts.mobile && opts.mobile !== '0');
     await send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: mobile ? 2 : 1, mobile });
     if (mobile) await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
@@ -73,10 +74,22 @@ async function main() {
         if (!p) { clicks.push('not drawn'); break; }
         const before = await count();
         await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y, button: 'none' });
-        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1 });
-        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+        const button = opts.button || 'left'; // button=right opens the node's menu
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button, clickCount: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button, clickCount: 1 });
         await sleep(900);
-        clicks.push({ before, after: await count(), selected: await evaluate('window.taskmapUI.state.selected') });
+        const menu = await evaluate(`(() => { const m = document.getElementById('ctx'); return m && !m.hidden ? [...m.querySelectorAll('button')].map((b) => (b.disabled ? '-' : '+') + b.textContent.trim()) : null; })()`);
+        clicks.push({ before, after: await count(), selected: await evaluate('window.taskmapUI.state.selected'), ...(menu ? { menu } : {}) });
+        // then=<css selector> clicks that element for real afterwards (a menu item, say).
+        if (opts.then) {
+          const q = await evaluate(`(() => { const el = document.querySelector(${JSON.stringify(opts.then)}); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+          if (q) {
+            await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: q.x, y: q.y, button: 'left', clickCount: 1 });
+            await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: q.x, y: q.y, button: 'left', clickCount: 1 });
+            await sleep(200);
+            clicks.push({ then: opts.then, clipboard: await evaluate('navigator.clipboard.readText().catch((e) => "(" + e.name + ")")') });
+          } else clicks.push({ then: opts.then, missing: true });
+        }
       }
       console.log('click: ' + JSON.stringify(clicks));
     }

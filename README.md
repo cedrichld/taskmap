@@ -125,7 +125,10 @@ Four views of the same tree, on keys `1` to `4`:
 Click a task to open it in the side panel. If anything is folded under it, the click
 also opens that branch; click it again to fold it. The orb views name only the
 milestones, what Claude is on and what waits on you; hover an orb or zoom in for the
-rest. `f` fits any view to the window. The activity feed on the right shows every
+rest. `f` fits any view to the window. Right-click a task for its actions (message
+Claude, add a subtask, mark done, reopen, block, not needed) and **Copy id**, which puts
+`n12` on the clipboard to mention in another chat (`taskmap show n12` reads it there).
+A click on empty space clears the selection. The activity feed on the right shows every
 change with who made it.
 
 Three tabs decide what you look at. **Open** (the default) shows only what is not

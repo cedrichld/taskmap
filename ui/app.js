@@ -1386,6 +1386,7 @@ function emptyPanelHtml() {
       <ul class="keys">
         <li><kbd>click</kbd>Open a task and its branch; again to fold it</li>
         <li><kbd>click</kbd>Empty space: back to this key</li>
+        <li><kbd>right-click</kbd>A task's actions, and Copy id</li>
         <li><kbd>drag</kbd>${state.view === 'orbs' ? 'Turn' : 'Move'} the map; scroll or pinch to zoom</li>
         <li><kbd>f</kbd>Fit to the window${state.view === 'orbs' ? '; <kbd>o</kbd> pauses the turning' : ''}</li>
         <li><kbd>1</kbd>–<kbd>4</kbd>Map, Graph, 3D, List</li>
@@ -1406,21 +1407,152 @@ function renderPanel() {
   const html = panelHtml(n);
   if (content._sig !== html) { content.innerHTML = html; content._sig = html; }
   actions.hidden = false;
-  const depth = depthOf(n.id);
-  const sub = $('[data-act="subtask"]');
-  sub.disabled = depth >= 3;
-  sub.title = depth >= 3 ? 'Steps cannot have subtasks (the map is three levels deep at most).' : 'Add a child node under this one';
-  const prog = hasKids(n.id) ? progressOf(n.id) : null;
-  const open = prog && prog.done < prog.total;
-  const done = $('[data-act="done"]');
-  done.disabled = n.status === 'done' || open;
-  done.title = open ? `${prog.total - prog.done} leaves underneath are not done yet` : 'Mark this node done';
-  $('[data-act="reopen"]').disabled = n.status === 'pending';
-  $('[data-act="block"]').disabled = n.status === 'blocked';
-  $('[data-act="skip"]').disabled = n.status === 'skipped';
+  const rules = actionRules(n);
+  for (const [act, r] of Object.entries(rules)) {
+    const b = $(`#panel-actions [data-act="${act}"]`);
+    b.disabled = r.disabled;
+    b.title = r.title;
+  }
   $('#fb-text').placeholder = n.status === 'blocked' ? 'Answer the question above…' : 'Tell Claude something about this task…';
   syncSend();
 }
+// Which of a node's actions apply: shared by the panel buttons and the right-click menu.
+function actionRules(n) {
+  const deep = depthOf(n.id) >= 3;
+  const prog = hasKids(n.id) ? progressOf(n.id) : null;
+  const open = prog && prog.done < prog.total;
+  return {
+    subtask: { disabled: deep, title: deep ? 'Steps cannot have subtasks (the map is three levels deep at most).' : 'Add a child node under this one' },
+    reopen: { disabled: n.status === 'pending', title: 'Put it back to not started' },
+    block: { disabled: n.status === 'blocked', title: 'Claude waits for your answer on it' },
+    skip: { disabled: n.status === 'skipped', title: 'Drop it, with a reason' },
+    done: { disabled: n.status === 'done' || Boolean(open), title: open ? `${prog.total - prog.done} leaves underneath are not done yet` : 'Mark this node done' },
+  };
+}
+
+// ---------- right-click menu: the panel's actions where the pointer is ----------
+const CTX_ITEMS = [
+  ['reply', 'message', 'Message Claude'],
+  ['subtask', 'plus', 'Add subtask…'],
+  null,
+  ['done', 'check', 'Mark done'],
+  ['reopen', 'back', 'Reopen'],
+  ['block', null, 'Mark blocked…'],
+  ['skip', 'close', 'Not needed…'],
+  null,
+  ['copy', null, 'Copy id'],
+];
+function nodeAtEvent(e) {
+  const t = e.target;
+  if (!t || !t.closest) return null;
+  const el = t.closest('#cardmap .card, #outline .row, #labels .label, #donelist .dl-row');
+  if (el) return nodeOf(el.dataset.id) ? el.dataset.id : null;
+  if (t.closest('#graph') && (state.view === 'graph' || state.view === 'orbs')) {
+    const id = hitTest(e.clientX, e.clientY);
+    return id && nodeOf(id) ? id : null;
+  }
+  return null;
+}
+function openCtx(id, x, y) {
+  const n = nodeOf(id);
+  if (!n) return;
+  const rules = actionRules(n);
+  const menu = $('#ctx');
+  menu.dataset.id = id;
+  menu.innerHTML = `<div class="ctx-head"><i class="ctx-dot st-${esc(n.status)}"></i><span>${esc(n.title)}</span></div>`
+    + CTX_ITEMS.map((it) => {
+      if (!it) return '<hr>';
+      const [act, ic, label] = it;
+      const r = rules[act] || { disabled: false, title: act === 'copy' ? `Copy "${id}" to reference it in a chat (taskmap show ${id})` : 'Write to Claude about this task' };
+      const tail = act === 'copy' ? ` <span class="mono ctx-id">${esc(id)}</span>` : '';
+      return `<button type="button" role="menuitem" data-ctx="${act}"${r.disabled ? ' disabled' : ''} title="${esc(r.title)}">${ic ? icon(ic) : '<span class="ic-blank"></span>'}${esc(label)}${tail}</button>`;
+    }).join('');
+  menu.hidden = false;
+  // Keep it on screen: flip left or up when the pointer is near an edge.
+  const w = menu.offsetWidth;
+  const h = menu.offsetHeight;
+  menu.style.left = `${Math.max(8, x + w > innerWidth - 8 ? x - w : x)}px`;
+  menu.style.top = `${Math.max(8, y + h > innerHeight - 8 ? y - h : y)}px`;
+  const first = menu.querySelector('button:not(:disabled)');
+  if (first) first.focus({ preventScroll: true });
+}
+function closeCtx() {
+  const menu = $('#ctx');
+  if (menu.hidden) return;
+  menu.hidden = true;
+  menu.innerHTML = '';
+}
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {
+    // no clipboard API (plain http on a LAN address): the old way
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
+    ta.remove();
+    return ok;
+  }
+}
+function ctxAct(act, id) {
+  if (act === 'copy') {
+    const b = $('#ctx [data-ctx="copy"]');
+    copyText(id).then((ok) => {
+      if (b) b.innerHTML = `${icon('check')}${ok ? 'Copied' : 'Could not copy'} <span class="mono ctx-id">${esc(id)}</span>`;
+      setTimeout(closeCtx, ok ? 450 : 1200);
+    });
+    return;
+  }
+  closeCtx();
+  if (!nodeOf(id)) return;
+  if (state.selected !== id) select(id, { sheet: false });
+  if (act === 'reply') { replyTo(id); if (narrow()) setSheet(true); return; }
+  if (act === 'done') { setStatus(id, 'done'); return; }
+  if (act === 'reopen') { setStatus(id, 'pending'); return; }
+  // Subtask, blocked and skipped need a line of text: the panel's inline form asks for it.
+  if (narrow()) setSheet(true);
+  openInline(act);
+  $('#inline-form').scrollIntoView({ block: 'nearest' });
+}
+function bindCtx() {
+  document.addEventListener('contextmenu', (e) => {
+    const id = nodeAtEvent(e);
+    if (!id) { closeCtx(); return; } // anywhere else keeps the browser's own menu
+    e.preventDefault();
+    let x = e.clientX;
+    let y = e.clientY;
+    if (!x && !y) { const r = e.target.getBoundingClientRect(); x = r.left + 12; y = r.bottom + 4; } // the menu key on a focused card
+    openCtx(id, x, y);
+  });
+  const menu = $('#ctx');
+  menu.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-ctx]');
+    if (b && !b.disabled) ctxAct(b.dataset.ctx, menu.dataset.id);
+  });
+  menu.addEventListener('keydown', (e) => {
+    const items = [...menu.querySelectorAll('button:not(:disabled)')];
+    const i = items.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const next = items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length];
+      if (next) next.focus();
+    } else if (e.key === 'Escape' || e.key === 'Tab') {
+      e.preventDefault();
+      e.stopPropagation();
+      closeCtx();
+    }
+  });
+  document.addEventListener('pointerdown', (e) => { if (!e.target.closest('#ctx')) closeCtx(); }, true);
+  window.addEventListener('wheel', closeCtx, { passive: true });
+  window.addEventListener('resize', closeCtx);
+  window.addEventListener('blur', closeCtx);
+}
+
 function syncSend() { $('#fb-send').disabled = !$('#fb-text').value.trim() || $('#fb-send').classList.contains('busy'); }
 function panelError(msg) {
   const el = $('#panel-error');
@@ -1833,6 +1965,7 @@ function bindEvents() {
 
   bindGraph();
   bindCardMap();
+  bindCtx();
 
   // List: the chevron or the count pill folds, a click opens what is folded or selects.
   const outline = $('#outline');

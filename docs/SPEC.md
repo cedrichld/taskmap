@@ -423,6 +423,10 @@ data: {"type":"ping"}
   `map` message. Reconnect with backoff (1 s, 2 s, 4 s, max 15 s) and show a
   "disconnected" state meanwhile; also re-fetch the map on reconnect.
 - Projects with `exists: false` are greyed in the switcher and not selectable.
+- Right-click (or the menu key on a focused card) on a node in any view opens a menu
+  with the panel's actions under the same rules (`actionRules`) plus **Copy id**; the
+  actions that need text open the panel's inline form. A click on empty space clears
+  the selection.
 - Scope (Open | Done | All), view choice (Map | Graph | 3D | List) and folded and
   opened node ids are kept in `sessionStorage` per project; the defaults are Open and
   Map, or List under 768 px. Open shows every node that is pending, in progress or blocked plus
