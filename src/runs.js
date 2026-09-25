@@ -24,7 +24,6 @@ const TAIL_BYTES = 256 * 1024; // how much of the transcript to scan for an inte
 const STALE_MS = 2 * 3600 * 1000; // an unended run with no heartbeat and no activity for this long has stopped
 const GAP_MAX_MS = 45 * 60 * 1000; // a longer gap between two finished steps is a break, not a pace sample
 const GAP_MIN_MS = 5000;
-const PRIOR_WEIGHT = 2; // how many observed steps the prior pace is worth
 const DEFAULT_CHUNKS = 3; // an unplanned milestone is worth this many steps until the map says otherwise
 
 function sidOf(sessionId) {
@@ -400,9 +399,6 @@ function summarizeRun(map, kids, run, all, { now, live, prior, chunks }) {
   }
 
   const runPace = done && lastDone !== null ? (lastDone - t0) / done : null;
-  let pace = null;
-  if (runPace && prior) pace = (done * runPace + PRIOR_WEIGHT * prior) / (done + PRIOR_WEIGHT);
-  else pace = runPace || prior || null;
 
   const heartbeat = Boolean(live && sid && live.has(sid));
   let state;
@@ -420,11 +416,12 @@ function summarizeRun(map, kids, run, all, { now, live, prior, chunks }) {
     done,
     total: Math.round(total * 10) / 10,
     waiting: Math.round(waiting * 10) / 10,
-    pace_ms: pace ? Math.round(pace) : null,
+    run_pace_ms: runPace ? Math.round(runPace) : null,
+    prior_ms: prior ? Math.round(prior) : null,
     base: new Date(lastDone !== null ? lastDone : t0).toISOString(),
     elapsed_ms: Math.max(0, (run.ended ? t1 : now) - t0),
   };
-  return Object.assign(r, extrapolate(r, now));
+  return Object.assign(r, extrapolate(r, now)); // pct, eta_ms and pace_ms at `now`
 }
 
 // Newest first: the last `limit` runs plus any older one that has not ended.

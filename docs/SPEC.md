@@ -526,12 +526,13 @@ finished or reopened during it by its session. Steps a concurrent run's session
 touched are that run's.
 
 Summary (`runs.summarize`, sent to the UI): `{ id, prompt, follow_ups, started, ended,
-state: running|done|paused|stopped, steps, done, total, waiting, pace_ms, base,
-elapsed_ms, pct, eta_ms }`. A leaf counts 1; an open milestone with no children yet
+state: running|done|paused|stopped, steps, done, total, waiting, run_pace_ms, prior_ms,
+base, elapsed_ms, pct, eta_ms, pace_ms }`. A leaf counts 1; an open milestone with no children yet
 counts the map's average leaves per milestone (1 to 8, default 3). `waiting` is blocked
-weight. `pace_ms` blends this run's (time to last finished step / steps done) with the
-project's median gap between finished steps (5 s to 45 min gaps, at least 3; else the
-median over every project), the prior weighing as 2 steps. `ui/prompts.js` holds the
+weight. The pace blends this run's own (`run_pace_ms`: time to its last finished step / steps
+done; while running, at least time so far / (done + 1), so a stall stretches it) with
+`prior_ms`, the project's median gap between finished steps (5 s to 45 min gaps, at
+least 3; else the median over every project), the prior weighing as 2 steps. `ui/prompts.js` holds the
 shared formula: the step under way gets credit `min(0.8, (now - base) / pace)`,
 `eta = (total - done - waiting - credit) * pace`. The project page reruns it every 30 s
 (not while hidden); the overview's 2 s poll gets fresh numbers. A run with no

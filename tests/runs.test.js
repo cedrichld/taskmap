@@ -52,11 +52,15 @@ test('a plan made during the prompt is its scope; unplanned milestones weigh lik
   assert.equal(r.total, 3 + 3 + 3);
   assert.equal(r.done, 1);
   assert.equal(r.state, 'running');
-  // One step in 10 minutes, 20 minutes into the next: partial credit is capped at 0.8.
-  assert.equal(r.pace_ms, 10 * MIN);
+  // One step in 10 minutes, then 20 more without another: 30 min for about 2 steps
+  // stretches the pace to 15; partial credit for the step under way is capped at 0.8.
+  assert.equal(r.run_pace_ms, 10 * MIN);
+  assert.equal(r.pace_ms, 15 * MIN);
   assert.equal(r.base, at(10));
-  assert.equal(r.eta_ms, Math.round((9 - 1 - 0.8) * 10 * MIN));
+  assert.equal(r.eta_ms, Math.round((9 - 1 - 0.8) * 15 * MIN));
   assert.ok(Math.abs(r.pct - 1.8 / 9) < 1e-9);
+  // Right after that first step, the pace is the plain 10 minutes.
+  assert.equal(one(map, run(), { now: T0 + 11 * MIN }).pace_ms, 10 * MIN);
 });
 
 test('work left open by an earlier prompt joins only once this prompt touches the map', () => {
