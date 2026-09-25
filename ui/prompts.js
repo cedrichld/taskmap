@@ -61,11 +61,19 @@
     return countdown > 0 && Math.abs(eta - countdown) <= Math.max(60000, 0.03 * r.estimate_ms) ? 'chat' : 'adjusted';
   }
   const MARK = { chat: '', adjusted: '~', taskmap: '~~' };
-  const TIP = {
-    chat: 'Claude\'s own estimate',
-    adjusted: '~ Claude\'s estimate, moved by taskmap to match how the steps are going',
-    taskmap: '~~ taskmap\'s own estimate from finished steps; Claude gave none',
-  };
+  // Claude's last estimate and how old it is: "Claude said 2h56, 20min ago" on the bar,
+  // "Claude's last estimate: ETA 2h56, 20min ago" in full. '' when it gave none.
+  function lastEstimate(r, now, full) {
+    if (!r.estimate_ms) return '';
+    const age = now - Date.parse(r.estimate_at);
+    const when = age < 60000 ? 'just now' : `${fmtDur(age)} ago`;
+    return full ? `Claude's last estimate: ETA ${fmtDur(r.estimate_ms)}, ${when}` : `Claude said ${fmtDur(r.estimate_ms)}, ${when}`;
+  }
+  function etaTip(r, src, now) {
+    if (src === 'taskmap') return '~~ No ETA from the chat yet: taskmap\'s guess from finished steps until it sends one';
+    if (src === 'adjusted') return `~ taskmap moved Claude's estimate to fit how the steps are going, until the chat sends a new one\n${lastEstimate(r, now, true)}`;
+    return `${lastEstimate(r, now, true)}, on schedule`;
+  }
   const etaText = (r, ms, now) => `${MARK[etaSource(r, now, ms)]}${fmtDur(ms)}`;
 
   const pctText = (p) => (p === null || p === undefined ? '' : `${Math.floor(p * 100)}%`);
@@ -78,16 +86,16 @@
     const w = (cls, big, eta, small) => ({ cls, big, eta, small, pct: x.pct });
     if (r.state === 'running') {
       // The lead may be idle while background agents work for this prompt: still running.
-      const inn = r.agents ? `${agentsText(r.agents)} · ${took} in` : `${took} in`;
+      const inn = [r.agents ? agentsText(r.agents) : '', lastEstimate(r, now), `${took} in`].filter(Boolean).join(' · ');
       if (!r.total) return w('running', 'Working', '', r.agents ? inn : `${took} in · no steps on the map yet`);
       if (x.eta_ms === null) return w('running', pct, 'ETA after 1st step', inn);
       if (r.waiting && x.eta_ms === 0) return w('waiting', pct, 'Waiting on you', inn);
-      return Object.assign(w('running', pct, `ETA ${etaText(r, x.eta_ms, now)}`, inn), { tip: TIP[etaSource(r, now, x.eta_ms)] });
+      return Object.assign(w('running', pct, `ETA ${etaText(r, x.eta_ms, now)}`, inn), { tip: etaTip(r, etaSource(r, now, x.eta_ms), now) });
     }
     if (r.state === 'done') return w('done', 'Done', '', `in ${took}`);
     if (r.state === 'paused') return w(r.waiting ? 'waiting' : 'paused', pct, '', r.waiting ? `waiting on you · ran ${took}` : `paused · ran ${took}`);
     return w('stopped', pct || '—', '', `session ended · ran ${took}`);
   }
 
-  return { PARTIAL_MAX, paceAt, extrapolate, fmtDur, etaSource, etaText, pctText, agentsText, words };
+  return { PARTIAL_MAX, paceAt, extrapolate, fmtDur, etaSource, etaText, lastEstimate, pctText, agentsText, words };
 });

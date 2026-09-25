@@ -155,6 +155,24 @@ function projectSummary(p, { sessions = {}, clients = {}, sids } = {}) {
   }
 }
 
+// A stamp of the dashboard's own files: when it changes, open pages reload themselves,
+// so a tab never keeps showing what an older version of the page meant.
+let uiStamp = { at: 0, value: '' };
+function uiVersion() {
+  if (Date.now() - uiStamp.at < 2000) return uiStamp.value;
+  let latest = 0;
+  try {
+    for (const name of fs.readdirSync(UI_DIR)) {
+      const st = fs.statSync(path.join(UI_DIR, name));
+      if (st.isFile() && st.mtimeMs > latest) latest = st.mtimeMs;
+    }
+  } catch (e) {
+    latest = 0;
+  }
+  uiStamp = { at: Date.now(), value: String(Math.round(latest)) };
+  return uiStamp.value;
+}
+
 function fullPayload(p) {
   const map = store.readMap(p.path);
   return {
@@ -163,6 +181,7 @@ function fullPayload(p) {
     log: store.readLog(p.path, LOG_TAIL),
     runs: runSummaries(p, map),
     now: Date.now(),
+    ui: uiVersion(),
   };
 }
 
@@ -284,7 +303,7 @@ function start({ port = store.port(), host = '127.0.0.1' } = {}) {
     let payload;
     try {
       const full = fullPayload({ ...p, exists: true });
-      payload = { type: 'map', map: full.map, log: full.log, runs: full.runs, now: full.now };
+      payload = { type: 'map', map: full.map, log: full.log, runs: full.runs, now: full.now, ui: full.ui };
     } catch (e) {
       return; // a torn read; the next poll will retry
     }
@@ -337,7 +356,7 @@ function start({ port = store.port(), host = '127.0.0.1' } = {}) {
         const sessions = store.liveSessionCounts();
         const counts = clientCounts();
         const sids = store.liveSids();
-        return sendJson(res, 200, { projects: store.listProjects().map((x) => projectSummary(x, { sessions, clients: counts.projects, sids })), now: Date.now() });
+        return sendJson(res, 200, { projects: store.listProjects().map((x) => projectSummary(x, { sessions, clients: counts.projects, sids })), now: Date.now(), ui: uiVersion() });
       }
       if (p === '/api/clients' && method === 'GET') {
         const counts = clientCounts();
@@ -363,7 +382,7 @@ function start({ port = store.port(), host = '127.0.0.1' } = {}) {
           res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
           res.write('retry: 2000\n\n');
           const full = fullPayload({ ...proj, exists: true });
-          sendEvent(res, { type: 'map', map: full.map, log: full.log, runs: full.runs, now: full.now });
+          sendEvent(res, { type: 'map', map: full.map, log: full.log, runs: full.runs, now: full.now, ui: full.ui });
           addClient(id, res);
           req.on('close', () => removeClient(id, res));
           return undefined;

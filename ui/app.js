@@ -1247,7 +1247,7 @@ function shownRuns() {
 function runRowHtml(r, now, label) {
   const { cls, big, eta, small, pct, tip: etaTip } = PR.words(r, now);
   const fill = r.state === 'done' ? 1 : pct || 0;
-  const tip = `${r.prompt}\n${r.done} of ${r.steps} steps done${r.total > r.steps ? '; milestones not broken down yet count as several' : ''} · started ${fmtClock(r.started)}${r.follow_ups ? ` · ${r.follow_ups} more message${r.follow_ups > 1 ? 's' : ''} while it ran` : ''}${r.agents ? ` · Claude is waiting on ${r.agents} background agent${r.agents > 1 ? 's' : ''}` : ''}${r.estimate_ms ? `\nClaude estimated ${PR.fmtDur(r.estimate_ms)} at ${fmtClock(r.estimate_at)}` : r.state === 'running' ? '\nNo estimate from Claude: the ETA comes from finished steps' : ''}`;
+  const tip = `${r.prompt}\n${r.done} of ${r.steps} steps done${r.total > r.steps ? '; milestones not broken down yet count as several' : ''} · started ${fmtClock(r.started)}${r.follow_ups ? ` · ${r.follow_ups} more message${r.follow_ups > 1 ? 's' : ''} while it ran` : ''}${r.agents ? ` · Claude is waiting on ${r.agents} background agent${r.agents > 1 ? 's' : ''}` : ''}${r.estimate_ms ? `\nThe chat estimated ${PR.fmtDur(r.estimate_ms)} at ${fmtClock(r.estimate_at)}` : r.state === 'running' ? '\nNo ETA from the chat yet: taskmap guesses from finished steps' : ''}`;
   // Six cells per prompt, laid out by the grid on #run-rows so stacked prompts line up.
   return `<div class="run st-${cls}" data-run-row="${esc(r.id)}">`
     + `<span class="k">${esc(label)}</span>`
@@ -1860,6 +1860,7 @@ async function loadProject() {
   try {
     const r = await api('GET', projPath());
     notice('');
+    if (staleUi(r.ui)) return;
     setRuns(r.runs, r.now);
     setMap(r.map, r.log);
   } catch (e) {
@@ -1870,6 +1871,16 @@ function disconnect() {
   if (state.retryTimer) clearTimeout(state.retryTimer);
   state.retryTimer = null;
   if (state.es) { state.es.close(); state.es = null; }
+}
+// The dashboard's files changed since this page loaded: reload, so it never shows what an
+// older version of the page meant (an ETA mark, say).
+let uiSeen = null;
+function staleUi(v) {
+  if (!v) return false;
+  if (uiSeen === null) uiSeen = v;
+  if (v === uiSeen) return false;
+  location.reload();
+  return true;
 }
 function connect() {
   disconnect();
@@ -1888,7 +1899,7 @@ function connect() {
     if (state.es !== es) return;
     let msg;
     try { msg = JSON.parse(ev.data); } catch (e) { return; }
-    if (msg && msg.type === 'map') { setRuns(msg.runs, msg.now); setMap(msg.map, msg.log); }
+    if (msg && msg.type === 'map') { if (staleUi(msg.ui)) return; setRuns(msg.runs, msg.now); setMap(msg.map, msg.log); }
   };
   es.onerror = () => {
     es.close();

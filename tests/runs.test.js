@@ -269,6 +269,11 @@ test("Claude's estimate sets the pace; without one, no guess before the first st
   assert.equal(P.words(bare, T0 + 5 * MIN).eta, 'ETA after 1st step');
   // Four minutes of looking around, then "taskmap eta 12m" with the plan: 3 min a step.
   const est = { ms: 12 * MIN, at: at(4), left: 4 };
+  const bare2 = () => {
+    const m2 = JSON.parse(JSON.stringify(map));
+    Object.assign(m2.nodes.a, { status: 'done', finished_at: at(6), updated: at(6), by: 'aaa' });
+    return one(m2, run(), { now: T0 + 9 * MIN });
+  };
   const r = one(map, run({ estimate: est }), { now: T0 + 4 * MIN });
   assert.deepEqual([r.prior_ms, r.estimate_ms, r.pace_from, r.base], [3 * MIN, 12 * MIN, at(4), at(4)]);
   assert.equal(r.eta_ms, 12 * MIN, 'at the moment it is given, the ETA is the estimate');
@@ -276,11 +281,16 @@ test("Claude's estimate sets the pace; without one, no guess before the first st
   const later = one(map, run({ estimate: est }), { now: T0 + 6 * MIN });
   assert.equal(later.eta_ms, Math.round((4 - 2 / 3) * 3 * MIN), 'and counts down');
   assert.equal(P.words(later, T0 + 6 * MIN).eta, 'ETA 10min', 'counting down on schedule is still Claude\'s');
+  assert.equal(P.words(later, T0 + 6 * MIN).small, 'Claude said 12min, 2min ago · 6min in');
+  assert.equal(P.words(r, T0 + 4 * MIN).small, 'Claude said 12min, just now · 4min in');
+  assert.equal(P.words(later, T0 + 6 * MIN).tip, "Claude's last estimate: ETA 12min, 2min ago, on schedule");
   // Sixteen minutes on, nothing finished: the estimate has run out and taskmap stretches it.
   const late = one(map, run({ estimate: est }), { now: T0 + 20 * MIN });
   assert.ok(late.eta_ms > 0);
   assert.match(P.words(late, T0 + 20 * MIN).eta, /^ETA ~\d/);
   assert.equal(P.etaSource(late, T0 + 20 * MIN, late.eta_ms), 'adjusted');
+  assert.equal(P.words(late, T0 + 20 * MIN).tip, "~ taskmap moved Claude's estimate to fit how the steps are going, until the chat sends a new one\nClaude's last estimate: ETA 12min, 16min ago");
+  assert.match(P.words(bare2(), T0 + 9 * MIN).tip, /^~~ No ETA from the chat yet/);
   // Steps finishing faster than estimated pull the ETA in.
   map.nodes.a = Object.assign(map.nodes.a, { status: 'done', finished_at: at(5), updated: at(5), by: 'aaa' });
   map.nodes.b = Object.assign(map.nodes.b, { status: 'done', finished_at: at(6), updated: at(6), by: 'aaa' });

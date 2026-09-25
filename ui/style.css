@@ -179,8 +179,10 @@ a.brand:hover { text-decoration: none; color: var(--accent); }
 .prompts { display: flex; align-items: flex-start; gap: 12px; padding: 7px 0; border-top: 1px solid var(--hairline); }
 .prompts[hidden] { display: none; }
 .run-rows {
-  flex: 1; min-width: 0; display: grid; align-items: center; column-gap: 10px; row-gap: 4px;
-  grid-template-columns: auto minmax(0, max-content) minmax(60px, 280px) auto auto minmax(0, 1fr);
+  flex: 1; min-width: 0; display: grid; align-items: center; justify-content: start; column-gap: 10px; row-gap: 4px;
+  /* The prompt and the small print share spare width evenly, so a long prompt cannot push
+     the small print (agents, Claude's last estimate) out of view. */
+  grid-template-columns: auto minmax(0, max-content) minmax(60px, 280px) auto auto minmax(0, max-content);
 }
 .run { display: contents; font-size: 12px; --run: var(--accent); }
 .run > * { min-height: 26px; display: flex; align-items: center; }

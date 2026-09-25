@@ -137,6 +137,9 @@ async function poll() {
     const res = await fetch('/api/projects');
     if (!res.ok) throw new Error(`The server answered ${res.status}.`);
     const data = await res.json();
+    // The dashboard's files changed since this page loaded: reload onto the new version.
+    if (data.ui && state.ui && data.ui !== state.ui) return location.reload();
+    if (data.ui) state.ui = data.ui;
     state.projects = data.projects || [];
     if (Number.isFinite(data.now)) state.skew = data.now - Date.now();
     state.failures = 0;
