@@ -51,8 +51,22 @@
 
   const agentsText = (n) => `${n} agent${n > 1 ? 's' : ''} working`;
 
-  // An ETA Claude did not estimate itself (worked out from finished steps) reads "~14min".
-  const etaText = (r, ms) => `${r.estimate_ms ? '' : '~'}${fmtDur(ms)}`;
+  // Whose ETA it is. 'chat': still Claude's own estimate counting down, because the steps
+  // keep to its schedule. 'adjusted': taskmap has moved Claude's estimate (steps finishing
+  // faster or slower, or none finishing while its time runs out). 'taskmap': Claude gave
+  // none, so taskmap worked it out from finished steps alone.
+  function etaSource(r, now, eta) {
+    if (!r.estimate_ms) return 'taskmap';
+    const countdown = r.estimate_ms - (now - Date.parse(r.estimate_at));
+    return countdown > 0 && Math.abs(eta - countdown) <= Math.max(60000, 0.03 * r.estimate_ms) ? 'chat' : 'adjusted';
+  }
+  const MARK = { chat: '', adjusted: '~', taskmap: '~~' };
+  const TIP = {
+    chat: 'Claude\'s own estimate',
+    adjusted: '~ Claude\'s estimate, moved by taskmap to match how the steps are going',
+    taskmap: '~~ taskmap\'s own estimate from finished steps; Claude gave none',
+  };
+  const etaText = (r, ms, now) => `${MARK[etaSource(r, now, ms)]}${fmtDur(ms)}`;
 
   const pctText = (p) => (p === null || p === undefined ? '' : `${Math.floor(p * 100)}%`);
 
@@ -68,12 +82,12 @@
       if (!r.total) return w('running', 'Working', '', r.agents ? inn : `${took} in · no steps on the map yet`);
       if (x.eta_ms === null) return w('running', pct, 'ETA after 1st step', inn);
       if (r.waiting && x.eta_ms === 0) return w('waiting', pct, 'Waiting on you', inn);
-      return w('running', pct, `ETA ${etaText(r, x.eta_ms)}`, inn);
+      return Object.assign(w('running', pct, `ETA ${etaText(r, x.eta_ms, now)}`, inn), { tip: TIP[etaSource(r, now, x.eta_ms)] });
     }
     if (r.state === 'done') return w('done', 'Done', '', `in ${took}`);
     if (r.state === 'paused') return w(r.waiting ? 'waiting' : 'paused', pct, '', r.waiting ? `waiting on you · ran ${took}` : `paused · ran ${took}`);
     return w('stopped', pct || '—', '', `session ended · ran ${took}`);
   }
 
-  return { PARTIAL_MAX, paceAt, extrapolate, fmtDur, etaText, pctText, agentsText, words };
+  return { PARTIAL_MAX, paceAt, extrapolate, fmtDur, etaSource, etaText, pctText, agentsText, words };
 });

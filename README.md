@@ -6,7 +6,7 @@ you can watch: a tree of plain-language tasks with live status, open in a browse
 the running session as a notification. The map is also Claude's own memory of the plan,
 so it survives compaction and restarts.
 
-![The taskmap dashboard](docs/dashboard-1440.png)
+![The taskmap dashboard](docs/dashboard.png)
 
 No dependencies, no account, no network. Node 20 or newer. The server binds
 `127.0.0.1` only, unless you deliberately share it to a phone.
@@ -84,7 +84,10 @@ same `62% · 14min`, and the overview card shows it too.
 The ETA starts from Claude's own estimate, given with the plan (`taskmap add --batch
 --eta 15m`, or `taskmap eta 15m`), and then follows how fast the prompt's steps actually
 finish. Without an estimate there is no ETA until the first step is done, rather than a
-guess from the project's history, and the ETA taskmap then works out itself reads `~14min`. Everything else costs no tokens: the prompt and stop
+guess from the project's history. The ETA says whose it is: `14min` is Claude's estimate
+counting down on schedule, `~14min` is Claude's estimate moved by taskmap because steps
+are finishing faster or slower (or not at all), and `~~14min` is taskmap's own, from
+finished steps, because Claude gave none. Everything else costs no tokens: the prompt and stop
 hooks record the turn silently, and the dashboard does the maths.
 The page moves the numbers every 30 seconds between updates, never while the tab is
 hidden.

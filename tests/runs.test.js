@@ -244,7 +244,7 @@ test('a run waiting on agents keeps its ETA and says so', () => {
   assert.ok(r.eta_ms > 0, 'the ETA keeps counting');
   const P = require('../ui/prompts');
   const w = P.words(r, T0 + 9 * MIN);
-  assert.match(w.eta, /^ETA ~\d/, 'no estimate from Claude: taskmap\'s own, marked ~');
+  assert.match(w.eta, /^ETA ~~\d/, 'no estimate from Claude: taskmap\'s own, marked ~~');
   assert.equal(w.small, '2 agents working · 9min in');
   assert.equal(P.words({ ...r, agents: 1 }, T0 + 9 * MIN).small, '1 agent working · 9min in');
   assert.equal(one(map, run({ agents: 2, ended: at(8) }), { now: T0 + 9 * MIN }).agents, 0, 'an ended run waits on nothing');
@@ -273,13 +273,21 @@ test("Claude's estimate sets the pace; without one, no guess before the first st
   assert.deepEqual([r.prior_ms, r.estimate_ms, r.pace_from, r.base], [3 * MIN, 12 * MIN, at(4), at(4)]);
   assert.equal(r.eta_ms, 12 * MIN, 'at the moment it is given, the ETA is the estimate');
   assert.equal(P.words(r, T0 + 4 * MIN).eta, 'ETA 12min', "Claude's estimate carries no ~");
-  assert.equal(one(map, run({ estimate: est }), { now: T0 + 6 * MIN }).eta_ms, Math.round((4 - 2 / 3) * 3 * MIN), 'and counts down');
+  const later = one(map, run({ estimate: est }), { now: T0 + 6 * MIN });
+  assert.equal(later.eta_ms, Math.round((4 - 2 / 3) * 3 * MIN), 'and counts down');
+  assert.equal(P.words(later, T0 + 6 * MIN).eta, 'ETA 10min', 'counting down on schedule is still Claude\'s');
+  // Sixteen minutes on, nothing finished: the estimate has run out and taskmap stretches it.
+  const late = one(map, run({ estimate: est }), { now: T0 + 20 * MIN });
+  assert.ok(late.eta_ms > 0);
+  assert.match(P.words(late, T0 + 20 * MIN).eta, /^ETA ~\d/);
+  assert.equal(P.etaSource(late, T0 + 20 * MIN, late.eta_ms), 'adjusted');
   // Steps finishing faster than estimated pull the ETA in.
   map.nodes.a = Object.assign(map.nodes.a, { status: 'done', finished_at: at(5), updated: at(5), by: 'aaa' });
   map.nodes.b = Object.assign(map.nodes.b, { status: 'done', finished_at: at(6), updated: at(6), by: 'aaa' });
   const fast = one(map, run({ estimate: est }), { now: T0 + 6 * MIN });
   assert.deepEqual([fast.pace_done, fast.run_pace_ms], [2, MIN]);
   assert.equal(fast.pace_ms, Math.round((2 * MIN + 2 * 3 * MIN) / 4));
+  assert.match(P.words(fast, T0 + 6 * MIN).eta, /^ETA ~\d/, 'ahead of schedule: moved by taskmap');
 });
 
 test('setEstimate puts the estimate on the session\'s open run with the work it covers', () => {

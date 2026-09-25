@@ -23,7 +23,7 @@
       "notes": [
         {
           "ts": "2026-08-21T16:40:00.000Z",
-          "text": "State: two of four milestones done; writing project pages. Next: finish the drone mapper page, then the robot arm page. Waiting on you: buy cedrichollande.com or stay on github.io (n18)."
+          "text": "State: two of four milestones done; writing project pages. Next: finish the drone mapper page, then the robot arm page. Waiting on you: buy yourname.com or stay on github.io (n18)."
         }
       ],
       "feedback": [],
@@ -394,7 +394,7 @@
       "why": "The address goes on the résumé, so it has to be easy to type and permanent.",
       "done_when": "The domain is registered and shows a placeholder page.",
       "status": "blocked",
-      "status_reason": "waiting on user: buy cedrichollande.com (about $12 a year on your card) or stay on the free github.io address? Paid, and the address goes on your résumé.",
+      "status_reason": "waiting on user: buy yourname.com (about $12 a year on your card) or stay on the free github.io address? Paid, and the address goes on your résumé.",
       "source": "claude",
       "links": [],
       "notes": [],
